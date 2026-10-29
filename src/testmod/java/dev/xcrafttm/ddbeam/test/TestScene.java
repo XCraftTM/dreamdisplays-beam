@@ -124,6 +124,12 @@ public final class TestScene implements ModInitializer {
         if (depth != null || facingName != null || bottomName != null) {
             // nothing in the room in front of the walls (light tests look at the bare floor)
             run(server, "fill -9 -60 0 9 -52 19 minecraft:air");
+            if ("light".equals(System.getProperty("ddbeam.test.mode"))) {
+                // two villagers in front of the picture's left and right part (Lumen lights entities too)
+                run(server, "kill @e[type=minecraft:villager]");
+                run(server, "summon minecraft:villager -2.5 -60 2.5 {NoAI:1b,Silent:1b,Rotation:[0f,0f]}");
+                run(server, "summon minecraft:villager 2.5 -60 2.5 {NoAI:1b,Silent:1b,Rotation:[0f,0f]}");
+            }
             for (ServerDisplay display : toList(DreamDisplaysServer.getDisplays())) {
                 LOG.info("Deleting display {}: {}", display.getId(), display.delete());
             }
