@@ -81,5 +81,6 @@
   "ddbeam.dialog.camera_mode.tip": "Was die Kamera selbst sendet. Manche Kameras schaffen ihre volle Größe und Bildrate nur als MJPEG. Gilt ab dem nächsten Live gehen / Wechseln.",
   "ddbeam.cast.video_paused": "Das Video des Displays ist pausiert, solange du überträgst.",
   "ddbeam.cast.ended_by_video": "Auf dem Display wurde ein Video gestartet, deine Übertragung wurde beendet.",
-  "ddbeam.cast.hidden_by_video": "Du hast das Video gestartet, die Übertragung auf diesem Display ist für dich ausgeblendet, bis sie neu startet."
+  "ddbeam.cast.hidden_by_video": "Du hast das Video gestartet, die Übertragung auf diesem Display ist für dich ausgeblendet, bis sie neu startet.",
+  "ddbeam.cast.codec_h264": "Ein Spieler, der nur H.264 empfangen kann, ist da: deine Übertragung läuft in H.264 weiter."
 }

@@ -1,6 +1,9 @@
 package dev.xcrafttm.ddbeam.client.cast;
 
 import dev.xcrafttm.ddbeam.Texts;
+import dev.xcrafttm.ddbeam.client.BeamClientNet;
+import dev.xcrafttm.ddbeam.client.capture.Ffmpeg;
+import dev.xcrafttm.ddbeam.DdBeam;
 import dev.xcrafttm.ddbeam.client.BeamConfig;
 import dev.xcrafttm.ddbeam.client.audio.Adpcm;
 import dev.xcrafttm.ddbeam.client.audio.AudioPlayer;
@@ -155,6 +158,46 @@ public final class Casts {
         dropRemote(display);
     }
 
+    /** What every Beam player on this server can decode (bits, see BeamPayloads.Codecs); H.264 until told. */
+    private static volatile int codecs = BeamPayloads.H264;
+    private static boolean helloSent;
+
+    public static int codecs() {
+        return codecs;
+    }
+
+    /**
+     * The server says what everyone can decode. A cast in HEVC that not everyone can decode any more (a player with
+     * an older Beam or without HEVC came) starts again in H.264.
+     */
+    public static void onCodecs(BeamPayloads.Codecs message) {
+        codecs = message.codecs() | BeamPayloads.H264;
+        LocalCast cast = local;
+        if (cast != null && cast.streamKind().equals("hevc") && (codecs & BeamPayloads.HEVC) == 0) {
+            DdBeam.LOGGER.info("Not everyone here can decode HEVC: the cast goes on in H.264");
+            message(Texts.tr("ddbeam.cast.codec_h264"));
+            start(cast.target, cast.settings);
+        }
+    }
+
+    /** Tells the server once what this client can decode (asks FFmpeg in the background). */
+    private static void sayHello() {
+        if (helloSent || !BeamClientNet.canSend(BeamPayloads.HELLO)) return;
+        helloSent = true;
+        Thread asking = new Thread(() -> {
+            // -Dddbeam.decoders=h264: as if this FFmpeg had no HEVC (for tests)
+            boolean hevc = !"h264".equals(System.getProperty("ddbeam.decoders")) && Ffmpeg.hasDecoder("hevc");
+            int decoders = BeamPayloads.H264 | (hevc ? BeamPayloads.HEVC : 0);
+            Minecraft.getInstance().execute(() -> {
+                if (BeamClientNet.canSend(BeamPayloads.HELLO)) {
+                    BeamClientNet.send(BeamPayloads.HELLO, new BeamPayloads.Hello(BeamPayloads.PROTOCOL, decoders).encode());
+                }
+            });
+        }, "ddbeam-hello");
+        asking.setDaemon(true);
+        asking.start();
+    }
+
     /** The server sent this player's delay probe back. */
     public static void onProbe(byte[] data) {
         LocalCast cast = local;
@@ -178,6 +221,7 @@ public final class Casts {
 
     /** Client tick: ends casts that went quiet, feeds the audio to OpenAL at the displays. */
     public static void tick(Minecraft mc) {
+        sayHello();
         long now = System.nanoTime();
         for (Iterator<CastFeed> it = FEEDS.values().iterator(); it.hasNext(); ) {
             CastFeed feed = it.next();
@@ -264,5 +308,7 @@ public final class Casts {
         REMOTE_AUDIO.clear();
         GUARDS.clear();
         HIDDEN.clear();
+        codecs = BeamPayloads.H264;
+        helloSent = false;
     }
 }

@@ -123,6 +123,8 @@ loom {
             vmArgs '-Xmx3G', '-Dddbeam.test.mode=viewer', '-Dddbeam.test.server=127.0.0.1:25700'
             if (javaRelease >= 22) vmArg '--enable-native-access=ALL-UNNAMED'
             if (project.hasProperty('testPrefix')) vmArg "-Dddbeam.test.prefix=${project.property('testPrefix')}"
+            // -PtestDecoders=h264: the viewer says it can only decode H.264
+            if (project.hasProperty('testDecoders')) vmArg "-Dddbeam.decoders=${project.property('testDecoders')}"
         }
     }
 }

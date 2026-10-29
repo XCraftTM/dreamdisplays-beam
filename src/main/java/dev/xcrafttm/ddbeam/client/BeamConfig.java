@@ -33,6 +33,8 @@ public final class BeamConfig {
     public boolean share = true;
     /** The other players get the cast as H.264 video: "auto" (hardware first, then libx264) or an FFmpeg encoder. */
     public String streamEncoder = "auto";
+    /** "auto": HEVC when every Beam player on the server can decode it and there is an HEVC encoder here; "h264". */
+    public String streamCodec = "auto";
     /** Bit rate of that video in kbit/s; 0: from the size and frame rate (about 12000 for 1440p60). */
     public int streamBitrateKbps = 0;
     /** Only when no H.264 encoder works: JPEG frames per second that are streamed to the other players. */

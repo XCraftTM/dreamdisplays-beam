@@ -73,6 +73,7 @@ public final class DdBeamClient implements ClientModInitializer {
         receive(BeamPayloads.STOP, data -> Casts.onStop(BeamPayloads.Stop.decode(data).display()));
         receive(BeamPayloads.NOTICE, data -> Casts.onNotice(BeamPayloads.Notice.decode(data)));
         receive(BeamPayloads.PROBE, Casts::onProbe);
+        receive(BeamPayloads.CODECS, data -> Casts.onCodecs(BeamPayloads.Codecs.decode(data)));
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(Casts::clear));
 
         ClientTickEvents.END_CLIENT_TICK.register(mc -> {

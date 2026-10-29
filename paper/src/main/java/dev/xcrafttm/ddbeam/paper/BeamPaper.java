@@ -26,7 +26,9 @@ import java.util.UUID;
 public final class BeamPaper extends JavaPlugin implements PluginMessageListener, Listener {
     private static final String START = "ddbeam:start", STOP = "ddbeam:stop", FRAME = "ddbeam:frame",
             STREAM = "ddbeam:stream", AUDIO = "ddbeam:audio", NOTICE = "ddbeam:notice",
-            PROBE = "ddbeam:probe";
+            PROBE = "ddbeam:probe", HELLO = "ddbeam:hello", CODECS = "ddbeam:codecs";
+    /** Video codecs, as bits (the mod's BeamPayloads.H264 and HEVC). */
+    private static final int H264 = 1, HEVC = 2;
     /** A cast whose caster sent nothing for this long is over. */
     private static final long IDLE_NS = 10_000_000_000L;
 
@@ -54,6 +56,9 @@ public final class BeamPaper extends JavaPlugin implements PluginMessageListener
 
     private final Map<UUID, Session> sessions = new HashMap<>();
     private final Displays displays = new Displays();
+    /** What each player's Beam said it can decode (its hello), and what each was told everyone can. */
+    private final Map<UUID, Integer> decoders = new HashMap<>();
+    private final Map<UUID, Integer> told = new HashMap<>();
     private Congestion congestion;
     /** How much video may wait on a viewer's connection before frames are left out for them. */
     private static final long VIEWER_QUEUE_LIMIT = 192 * 1024;
@@ -68,8 +73,8 @@ public final class BeamPaper extends JavaPlugin implements PluginMessageListener
         congestion = new Congestion(getLogger());
         loadSettings();
         var messenger = getServer().getMessenger();
-        for (String channel : new String[]{START, STOP, FRAME, STREAM, AUDIO, PROBE}) messenger.registerIncomingPluginChannel(this, channel, this);
-        for (String channel : new String[]{STOP, FRAME, STREAM, AUDIO, NOTICE, PROBE}) messenger.registerOutgoingPluginChannel(this, channel);
+        for (String channel : new String[]{START, STOP, FRAME, STREAM, AUDIO, PROBE, HELLO}) messenger.registerIncomingPluginChannel(this, channel, this);
+        for (String channel : new String[]{STOP, FRAME, STREAM, AUDIO, NOTICE, PROBE, CODECS}) messenger.registerOutgoingPluginChannel(this, channel);
         getServer().getPluginManager().registerEvents(this, this);
         try {
             getServer().getScheduler().runTaskTimer(this, this::endIdle, 20, 20);
@@ -110,6 +115,12 @@ public final class BeamPaper extends JavaPlugin implements PluginMessageListener
                 case FRAME -> frame(player, message);
                 case STREAM -> stream(player, message);
                 case AUDIO -> audio(player, message);
+                case HELLO -> {
+                    Wire wire = new Wire(message);
+                    wire.varInt();
+                    decoders.put(player.getUniqueId(), H264 | wire.varInt() & HEVC);
+                    shareCodecs();
+                }
                 // a caster's delay probe goes straight back
                 case PROBE -> {
                     if (message.length == 8 && player.getListeningPluginChannels().contains(PROBE)) player.sendPluginMessage(this, PROBE, message);
@@ -284,7 +295,32 @@ public final class BeamPaper extends JavaPlugin implements PluginMessageListener
         getLogger().info("Cast onto display " + session.display + " ended");
     }
 
+    /**
+     * Tells every Beam player what all Beam players here can decode, when it changed for them: casters stream HEVC
+     * only when everyone can. A player whose Beam says nothing (an older one) counts as H.264 only.
+     */
+    private void shareCodecs() {
+        int everyone = H264 | HEVC;
+        java.util.List<Player> beam = new java.util.ArrayList<>();
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            if (!player.getListeningPluginChannels().contains(STREAM)) continue;
+            beam.add(player);
+            everyone &= decoders.getOrDefault(player.getUniqueId(), H264);
+        }
+        // a VarInt below 128 is one byte
+        byte[] out = {(byte) everyone};
+        for (Player player : beam) {
+            if (!player.getListeningPluginChannels().contains(CODECS) || Integer.valueOf(everyone).equals(told.get(player.getUniqueId()))) continue;
+            player.sendPluginMessage(this, CODECS, out);
+            told.put(player.getUniqueId(), everyone);
+        }
+    }
+
+    private int ticks;
+
     private void endIdle() {
+        // players come and go (and say what they can decode a moment after joining)
+        if (++ticks % 5 == 0) shareCodecs();
         long now = System.nanoTime();
         for (Session session : sessions.values().toArray(new Session[0])) {
             if (now - session.lastDataNs > IDLE_NS) end(session);
@@ -298,5 +334,7 @@ public final class BeamPaper extends JavaPlugin implements PluginMessageListener
             if (session.caster.equals(id)) end(session);
             else session.viewers.remove(id);
         }
+        decoders.remove(id);
+        told.remove(id);
     }
 }

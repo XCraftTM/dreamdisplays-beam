@@ -21,9 +21,15 @@ public final class BeamPayloads {
     public static final String START = "start", STOP = "stop", FRAME = "frame", STREAM = "stream", AUDIO = "audio", NOTICE = "notice";
     /** A caster's delay probe (8 bytes), which the server sends straight back: see DelayProbe. */
     public static final String PROBE = "probe";
+    /** What a player's client can decode ({@link Hello}), and what everyone on the server can ({@link Codecs}). */
+    public static final String HELLO = "hello", CODECS = "codecs";
+    /** Video codecs, as bits. */
+    public static final int H264 = 1, HEVC = 2;
+    /** Beam's protocol version in {@link Hello}. */
+    public static final int PROTOCOL = 2;
     /** Channels a client sends on, and the ones the server sends on. */
-    public static final String[] TO_SERVER = {START, STOP, FRAME, STREAM, AUDIO, PROBE};
-    public static final String[] TO_CLIENT = {STOP, FRAME, STREAM, AUDIO, NOTICE, PROBE};
+    public static final String[] TO_SERVER = {START, STOP, FRAME, STREAM, AUDIO, PROBE, HELLO};
+    public static final String[] TO_CLIENT = {STOP, FRAME, STREAM, AUDIO, NOTICE, PROBE, CODECS};
 
     private BeamPayloads() {
     }
@@ -41,6 +47,32 @@ public final class BeamPayloads {
     }
 
     /** Both ways: a cast ends (caster to server, server to the players that may have seen it). */
+    /** To the server, once: the client's protocol version and the codecs it can decode (bits). */
+    public record Hello(int protocol, int decoders) {
+        public byte[] encode() {
+            return new Wire.Writer().varInt(protocol).varInt(decoders).done();
+        }
+
+        public static Hello decode(byte[] data) {
+            Wire.Reader r = new Wire.Reader(data);
+            return new Hello(r.varInt(), r.varInt());
+        }
+    }
+
+    /**
+     * To the clients: the codecs every Beam player on the server can decode (bits); a player whose Beam sends no
+     * {@link Hello} counts as H.264 only.
+     */
+    public record Codecs(int codecs) {
+        public byte[] encode() {
+            return new Wire.Writer().varInt(codecs).done();
+        }
+
+        public static Codecs decode(byte[] data) {
+            return new Codecs(new Wire.Reader(data).varInt());
+        }
+    }
+
     public record Stop(UUID display) {
         public byte[] encode() {
             return new Wire.Writer().uuid(display).done();

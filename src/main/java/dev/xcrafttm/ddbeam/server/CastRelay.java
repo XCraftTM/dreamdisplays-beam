@@ -57,6 +57,9 @@ public final class CastRelay {
     }
 
     private static final Map<UUID, Session> SESSIONS = new HashMap<>();
+    /** What each player's Beam said it can decode (see BeamPayloads.Hello), and what each was told everyone can. */
+    private static final Map<UUID, Integer> DECODERS = new HashMap<>();
+    private static final Map<UUID, Integer> TOLD = new HashMap<>();
 
     private CastRelay() {
     }
@@ -70,6 +73,11 @@ public final class CastRelay {
         BeamNet.receive(BeamPayloads.FRAME, safe((player, data) -> frame(serverOf(player), player, BeamPayloads.Frame.decode(data))));
         BeamNet.receive(BeamPayloads.STREAM, safe((player, data) -> stream(serverOf(player), player, BeamPayloads.Stream.decode(data))));
         BeamNet.receive(BeamPayloads.AUDIO, safe((player, data) -> audio(serverOf(player), player, BeamPayloads.Audio.decode(data))));
+        BeamNet.receive(BeamPayloads.HELLO, safe((player, data) -> {
+            BeamPayloads.Hello hello = BeamPayloads.Hello.decode(data);
+            DECODERS.put(player.getUUID(), BeamPayloads.H264 | hello.decoders() & BeamPayloads.HEVC);
+            shareCodecs(serverOf(player));
+        }));
         // a caster's delay probe goes straight back
         BeamNet.receive(BeamPayloads.PROBE, safe((player, data) -> {
             if (data.length == 8 && BeamNet.canSend(player, BeamPayloads.PROBE)) BeamNet.send(player, BeamPayloads.PROBE, data);
@@ -77,13 +85,42 @@ public final class CastRelay {
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> server.execute(() -> {
             UUID player = handler.player.getUUID();
             for (Session session : sessions()) if (session.caster.equals(player)) end(server, session);
+            DECODERS.remove(player);
+            TOLD.remove(player);
         }));
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             if (server.getTickCount() % 20 != 0) return;
+            // players come and go (and say what they can decode a moment after joining)
+            if (server.getTickCount() % 100 == 0) shareCodecs(server);
             long now = System.nanoTime();
             for (Session session : sessions()) if (now - session.lastFrameNs > IDLE_NS) end(server, session);
         });
-        ServerLifecycleEvents.SERVER_STOPPED.register(server -> SESSIONS.clear());
+        ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
+            SESSIONS.clear();
+            DECODERS.clear();
+            TOLD.clear();
+        });
+    }
+
+    /**
+     * Tells every Beam player what all Beam players here can decode, when it changed for them: casters stream HEVC
+     * only when everyone can. A player whose Beam says nothing (an older one) counts as H.264 only.
+     */
+    private static void shareCodecs(MinecraftServer server) {
+        if (server == null) return;
+        int everyone = BeamPayloads.H264 | BeamPayloads.HEVC;
+        java.util.List<ServerPlayer> beam = new java.util.ArrayList<>();
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            if (!BeamNet.canSend(player, BeamPayloads.STREAM)) continue;
+            beam.add(player);
+            everyone &= DECODERS.getOrDefault(player.getUUID(), BeamPayloads.H264);
+        }
+        byte[] out = new BeamPayloads.Codecs(everyone).encode();
+        for (ServerPlayer player : beam) {
+            if (!BeamNet.canSend(player, BeamPayloads.CODECS) || Integer.valueOf(everyone).equals(TOLD.get(player.getUUID()))) continue;
+            BeamNet.send(player, BeamPayloads.CODECS, out);
+            TOLD.put(player.getUUID(), everyone);
+        }
     }
 
     /** A broken packet from a client is ignored. */

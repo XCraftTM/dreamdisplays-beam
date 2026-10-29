@@ -51,6 +51,7 @@ public final class LocalCast {
     }
 
     public final UUID display;
+    final Targets.Target target;
     public final CaptureSource source;
     public final Settings settings;
     public final int width, height;
@@ -81,6 +82,7 @@ public final class LocalCast {
 
     LocalCast(Targets.Target target, Settings settings) {
         this.display = target.id();
+        this.target = target;
         this.source = settings.source();
         this.settings = settings;
         int[] size = target.pictureSize(settings.maxWidth(), settings.maxHeight());
@@ -97,6 +99,7 @@ public final class LocalCast {
     void start() {
         Thread starter = new Thread(() -> {
             try {
+                capture.useCodec(codec());
                 capture.start();
                 if (settings.audio()) startAudio();
             } catch (Exception e) {
@@ -111,6 +114,18 @@ public final class LocalCast {
                 BeamClientNet.send(BeamPayloads.START, new BeamPayloads.Start(display, width, height).encode());
             }
         });
+    }
+
+    /**
+     * HEVC (about a third less data for the same picture) when every Beam player on the server can decode it and this
+     * computer can encode it, else H.264. Not on the render thread (the encoders may be tried first).
+     */
+    private String codec() {
+        if (!"h264".equalsIgnoreCase(BeamConfig.get().streamCodec) && (Casts.codecs() & BeamPayloads.HEVC) != 0
+                && dev.xcrafttm.ddbeam.client.capture.VideoEncoder.get(dev.xcrafttm.ddbeam.client.capture.VideoEncoder.HEVC) != null) {
+            return dev.xcrafttm.ddbeam.client.capture.VideoEncoder.HEVC;
+        }
+        return dev.xcrafttm.ddbeam.client.capture.VideoEncoder.H264;
     }
 
     private void startAudio() throws Exception {
@@ -344,7 +359,7 @@ public final class LocalCast {
 
     /** How the others get it: "h264" (video stream), "jpeg" (frames) or "" (not shared). */
     public String streamKind() {
-        return !serverShares ? "" : capture.streaming() ? "h264" : "jpeg";
+        return !serverShares ? "" : capture.streaming() ? capture.streamCodec() : "jpeg";
     }
 
     public long streamBytes() {

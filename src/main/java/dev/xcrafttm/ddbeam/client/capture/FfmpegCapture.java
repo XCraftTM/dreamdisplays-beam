@@ -73,6 +73,27 @@ public final class FfmpegCapture implements AutoCloseable {
         return source;
     }
 
+    private volatile String codec = VideoEncoder.H264, encoderInUse;
+
+    /** The codec to stream in ({@link VideoEncoder#H264} or {@link VideoEncoder#HEVC}); before {@link #start}. */
+    public void useCodec(String codec) {
+        this.codec = codec;
+    }
+
+    /** The encoder for the chosen codec, H.264's when that codec has none here. */
+    private String streamEncoder() {
+        String encoder = VideoEncoder.get(codec);
+        if (encoder == null && !codec.equals(VideoEncoder.H264)) encoder = VideoEncoder.get(VideoEncoder.H264);
+        encoderInUse = encoder;
+        return encoder;
+    }
+
+    /** The codec of the stream for the other players ("" before it started or without one). */
+    public String streamCodec() {
+        String encoder = encoderInUse;
+        return encoder == null ? "" : VideoEncoder.codecOf(encoder);
+    }
+
     /** The scale filter for the configured fit, ending in the pixel format the JPEG encoder takes. */
     private String filter() {
         return scaleFilter() + ",format=yuvj420p";
@@ -100,7 +121,7 @@ public final class FfmpegCapture implements AutoCloseable {
         } else {
             command.add(Ffmpeg.path());
             command.addAll(List.of("-hide_banner", "-loglevel", "error", "-nostdin"));
-            String encoder = onStream != null ? VideoEncoder.get() : null;
+            String encoder = onStream != null ? streamEncoder() : null;
             if (encoder != null) command.addAll(VideoEncoder.deviceArgs(encoder));
             command.addAll(source.inputArgs(fps));
             if (encoder != null) {

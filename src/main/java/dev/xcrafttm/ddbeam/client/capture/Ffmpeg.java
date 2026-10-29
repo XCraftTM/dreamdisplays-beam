@@ -53,6 +53,25 @@ public final class Ffmpeg {
         });
     }
 
+    private static final java.util.Map<String, Boolean> DECODERS = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Whether this FFmpeg can decode [name] (e.g. "hevc"). Blocks the first time: not on the render thread. */
+    public static boolean hasDecoder(String name) {
+        return DECODERS.computeIfAbsent(name, n -> {
+            try {
+                for (String line : run(List.of("-decoders"), 8000).split("\\R")) {
+                    String[] parts = line.trim().split("\\s+");
+                    if (parts.length >= 2 && parts[1].equals(n)) return true;
+                }
+            } catch (IOException e) {
+                DdBeam.LOGGER.warn("Could not ask FFmpeg for its decoders: {}", e.toString());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return false;
+        });
+    }
+
     /** Runs FFmpeg with these arguments and returns what it wrote to stderr (where it lists devices). */
     public static String run(List<String> args, long timeoutMs) throws IOException, InterruptedException {
         List<String> command = new ArrayList<>();

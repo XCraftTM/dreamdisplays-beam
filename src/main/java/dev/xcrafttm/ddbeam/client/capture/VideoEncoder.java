@@ -19,21 +19,31 @@ import java.util.List;
  *   <li>Linux: NVIDIA NVENC, then VAAPI (AMD and Intel, through Mesa or Intel's media driver).</li>
  *   <li>macOS: VideoToolbox (Apple Silicon and Intel Macs).</li>
  * </ul>
- * H.264 because every player can decode it (hardware decoding with {@code -hwaccel auto} on all of the above).
+ * H.264 every player can decode (hardware decoding with {@code -hwaccel auto} on all of the above); HEVC takes about a
+ * third less for the same picture and is used when every Beam player on the server can decode it (see Casts), with
+ * the same hardware encoders (no CPU one: libx265 is too slow for live casts, libx264 takes over then).
  */
 public final class VideoEncoder {
-    private static volatile String chosen;
-    private static volatile boolean probed;
+    public static final String H264 = "h264", HEVC = "hevc";
+    /** The encoder found per codec ("" for none). */
+    private static final java.util.Map<String, String> CHOSEN = new java.util.concurrent.ConcurrentHashMap<>();
 
     private VideoEncoder() {
     }
 
-    private static List<String> candidates() {
+    private static List<String> candidates(String codec) {
+        boolean hevc = codec.equals(HEVC);
         return switch (Sources.os()) {
-            case "windows" -> List.of("h264_nvenc", "h264_amf", "h264_qsv", "h264_mf", "libx264");
-            case "mac" -> List.of("h264_videotoolbox", "libx264");
-            default -> List.of("h264_nvenc", "h264_vaapi", "libx264");
+            case "windows" -> hevc ? List.of("hevc_nvenc", "hevc_amf", "hevc_qsv", "hevc_mf")
+                    : List.of("h264_nvenc", "h264_amf", "h264_qsv", "h264_mf", "libx264");
+            case "mac" -> hevc ? List.of("hevc_videotoolbox") : List.of("h264_videotoolbox", "libx264");
+            default -> hevc ? List.of("hevc_nvenc", "hevc_vaapi") : List.of("h264_nvenc", "h264_vaapi", "libx264");
         };
+    }
+
+    /** The codec an encoder writes. */
+    public static String codecOf(String encoder) {
+        return encoder.startsWith("hevc") ? HEVC : H264;
     }
 
     /** VAAPI's render node (the first GPU), for Linux. */
@@ -47,12 +57,21 @@ public final class VideoEncoder {
         return "/dev/dri/renderD128";
     }
 
-    /** The encoder to use, null when this FFmpeg can encode no H.264 at all. Blocks: not on the render thread. */
-    public static synchronized String get() {
+    /** The H.264 encoder to use, null when this FFmpeg can encode no H.264 at all. Blocks: not on the render thread. */
+    public static String get() {
+        return get(H264);
+    }
+
+    /** The encoder for [codec], null when there is none. Blocks: not on the render thread. */
+    public static synchronized String get(String codec) {
         String configured = BeamConfig.get().streamEncoder;
-        if (configured != null && !configured.isBlank() && !configured.equals("auto")) return configured;
-        if (probed) return chosen;
-        for (String encoder : candidates()) {
+        if (configured != null && !configured.isBlank() && !configured.equals("auto")) {
+            return codecOf(configured).equals(codec) ? configured : null;
+        }
+        String found = CHOSEN.get(codec);
+        if (found != null) return found.isEmpty() ? null : found;
+        String chosen = null;
+        for (String encoder : candidates(codec)) {
             try {
                 List<String> args = new ArrayList<>(List.of("-loglevel", "error"));
                 args.addAll(deviceArgs(encoder));
@@ -70,24 +89,21 @@ public final class VideoEncoder {
                 DdBeam.LOGGER.info("Encoder {} not usable: {}", encoder, e.toString());
             }
         }
-        probed = true;
-        DdBeam.LOGGER.info("Stream encoder: {}", chosen == null ? "none (casts go out as JPEG frames)" : chosen);
+        CHOSEN.put(codec, chosen == null ? "" : chosen);
+        DdBeam.LOGGER.info("Stream encoder for {}: {}", codec, chosen == null ? "none" : chosen);
         return chosen;
     }
 
     /** FFmpeg arguments that go before the inputs (a hardware device the encoder needs). */
     public static List<String> deviceArgs(String encoder) {
-        return encoder.equals("h264_vaapi") ? List.of("-vaapi_device", vaapiDevice()) : List.of();
+        return encoder.endsWith("_vaapi") ? List.of("-vaapi_device", vaapiDevice()) : List.of();
     }
 
     /** The end of the filter chain that feeds the encoder: its pixel format (and the upload to the GPU for VAAPI). */
     public static String inputFormat(String encoder) {
-        return switch (encoder) {
-            case "h264_vaapi" -> "nv12,hwupload";
-            // hardware encoders behind Media Foundation take NV12 only
-            case "h264_mf" -> "nv12";
-            default -> "yuv420p";
-        };
+        // hardware encoders behind Media Foundation take NV12 only
+        if (encoder.endsWith("_vaapi")) return "nv12,hwupload";
+        return encoder.endsWith("_mf") ? "nv12" : "yuv420p";
     }
 
     /** Bits per second for a picture: about 12 Mbit/s for 1440p60, at least 2.5 Mbit/s. */
