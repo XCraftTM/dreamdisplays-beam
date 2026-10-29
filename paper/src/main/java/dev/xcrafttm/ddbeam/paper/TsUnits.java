@@ -114,7 +114,8 @@ final class TsUnits {
 
     /** One connection's gate: whole units only; after a dropped unit nothing until a key frame with room for it. */
     public static final class Gate {
-        private boolean dropping;
+        /** Set by the stream's thread and, when a connection breaks, by another one. */
+        private volatile boolean dropping;
         private long dropped;
 
         /**
@@ -131,6 +132,11 @@ final class TsUnits {
             }
             if (dropping) dropped++;
             return !dropping;
+        }
+
+        /** What came before was lost on the way: nothing until the next key frame. */
+        public void drop() {
+            dropping = true;
         }
 
         public long dropped() {

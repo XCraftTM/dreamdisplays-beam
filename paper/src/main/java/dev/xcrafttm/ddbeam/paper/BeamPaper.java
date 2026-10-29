@@ -26,7 +26,7 @@ import java.util.UUID;
 public final class BeamPaper extends JavaPlugin implements PluginMessageListener, Listener {
     private static final String START = "ddbeam:start", STOP = "ddbeam:stop", FRAME = "ddbeam:frame",
             STREAM = "ddbeam:stream", AUDIO = "ddbeam:audio", NOTICE = "ddbeam:notice",
-            PROBE = "ddbeam:probe", HELLO = "ddbeam:hello", CODECS = "ddbeam:codecs";
+            PROBE = "ddbeam:probe", HELLO = "ddbeam:hello", CODECS = "ddbeam:codecs", PORT = "ddbeam:port";
     /** Video codecs, as bits (the mod's BeamPayloads.H264 and HEVC). */
     private static final int H264 = 1, HEVC = 2;
     /** A cast whose caster sent nothing for this long is over. */
@@ -60,6 +60,7 @@ public final class BeamPaper extends JavaPlugin implements PluginMessageListener
     private final Map<UUID, Integer> decoders = new HashMap<>();
     private final Map<UUID, Integer> told = new HashMap<>();
     private Congestion congestion;
+    private StreamPort streamPort;
     /** How much video may wait on a viewer's connection before frames are left out for them. */
     private static final long VIEWER_QUEUE_LIMIT = 192 * 1024;
     private boolean relay;
@@ -74,7 +75,7 @@ public final class BeamPaper extends JavaPlugin implements PluginMessageListener
         loadSettings();
         var messenger = getServer().getMessenger();
         for (String channel : new String[]{START, STOP, FRAME, STREAM, AUDIO, PROBE, HELLO}) messenger.registerIncomingPluginChannel(this, channel, this);
-        for (String channel : new String[]{STOP, FRAME, STREAM, AUDIO, NOTICE, PROBE, CODECS}) messenger.registerOutgoingPluginChannel(this, channel);
+        for (String channel : new String[]{STOP, FRAME, STREAM, AUDIO, NOTICE, PROBE, CODECS, PORT}) messenger.registerOutgoingPluginChannel(this, channel);
         getServer().getPluginManager().registerEvents(this, this);
         try {
             getServer().getScheduler().runTaskTimer(this, this::endIdle, 20, 20);
@@ -94,11 +95,15 @@ public final class BeamPaper extends JavaPlugin implements PluginMessageListener
         viewDistance = getConfig().getDouble("viewDistance", 96);
         maxKilobytesPerSecond = getConfig().getInt("maxKilobytesPerSecond", 4096);
         maxFps = getConfig().getInt("maxFps", 30);
+        if (streamPort != null) streamPort.stop();
+        streamPort = new StreamPort(this, getConfig().getInt("streamPort", 0), getConfig().getString("streamHost", ""));
+        streamPort.start();
     }
 
     @Override
     public void onDisable() {
         for (Session session : sessions.values().toArray(new Session[0])) end(session);
+        if (streamPort != null) streamPort.stop();
         getServer().getMessenger().unregisterIncomingPluginChannel(this);
         getServer().getMessenger().unregisterOutgoingPluginChannel(this);
     }
@@ -233,11 +238,36 @@ public final class BeamPaper extends JavaPlugin implements PluginMessageListener
         boolean fits = spend(session, 0) && session.budget >= message.length;
         if (!session.budgetGate.pass(unitStart, key, !fits, fits)) return;
         session.budget = Math.max(0, session.budget - message.length);
-        deliver(player, session, STREAM, Wire.withCaster(message, player.getUniqueId()), viewer -> {
-            long behind = congestion.pending(viewer);
+        byte[] out = Wire.withCaster(message, player.getUniqueId());
+        deliver(player, session, STREAM, out, viewer -> {
+            StreamLink link = streamPort.link(viewer.getUniqueId());
+            long behind = link != null ? link.queued() : congestion.pending(viewer);
             TsUnits.Gate gate = session.viewerGates.computeIfAbsent(viewer.getUniqueId(), id -> new TsUnits.Gate());
-            return gate.pass(unitStart, key, behind > VIEWER_QUEUE_LIMIT, behind < VIEWER_QUEUE_LIMIT / 2);
+            if (!gate.pass(unitStart, key, behind > VIEWER_QUEUE_LIMIT, behind < VIEWER_QUEUE_LIMIT / 2)) return false;
+            // over the viewer's stream connection when it has one
+            return link == null || !link.send(StreamLink.STREAM, out);
         });
+    }
+
+    /** Main thread: a frame from a player's stream connection, as if it came over the game connection. */
+    void fromLink(UUID id, int type, byte[] data) {
+        Player player = Bukkit.getPlayer(id);
+        if (player == null) return;
+        try {
+            if (type == StreamLink.STREAM) stream(player, data);
+            else if (type == StreamLink.FRAME) frame(player, data);
+        } catch (IllegalArgumentException e) {
+            // a broken frame is ignored like a broken packet
+        }
+    }
+
+    /** Main thread: a player's stream connection broke; what it was sent is lost, so its casts start at a key frame. */
+    void linkLost(UUID player) {
+        for (Session session : sessions.values()) {
+            TsUnits.Gate gate = session.viewerGates.get(player);
+            if (gate != null) gate.drop();
+            if (session.caster.equals(player)) session.budgetGate.drop();
+        }
     }
 
     /** Audio goes to whoever gets the cast's video. */
@@ -305,6 +335,7 @@ public final class BeamPaper extends JavaPlugin implements PluginMessageListener
         for (Player player : Bukkit.getOnlinePlayers()) {
             if (!player.getListeningPluginChannels().contains(STREAM)) continue;
             beam.add(player);
+            streamPort.offer(player, PORT);
             everyone &= decoders.getOrDefault(player.getUniqueId(), H264);
         }
         // a VarInt below 128 is one byte
@@ -336,5 +367,6 @@ public final class BeamPaper extends JavaPlugin implements PluginMessageListener
         }
         decoders.remove(id);
         told.remove(id);
+        streamPort.forget(id);
     }
 }

@@ -5,6 +5,7 @@ import com.dreamdisplays.api.server.ServerDisplay;
 import dev.xcrafttm.ddbeam.DdBeam;
 import dev.xcrafttm.ddbeam.net.BeamPayloads;
 import dev.xcrafttm.ddbeam.net.Congestion;
+import dev.xcrafttm.ddbeam.net.StreamLink;
 import dev.xcrafttm.ddbeam.net.TsUnits;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -87,7 +88,10 @@ public final class CastRelay {
             for (Session session : sessions()) if (session.caster.equals(player)) end(server, session);
             DECODERS.remove(player);
             TOLD.remove(player);
+            StreamPort.forget(player);
         }));
+        ServerLifecycleEvents.SERVER_STARTED.register(StreamPort::start);
+        ServerLifecycleEvents.SERVER_STOPPING.register(server -> StreamPort.stop());
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             if (server.getTickCount() % 20 != 0) return;
             // players come and go (and say what they can decode a moment after joining)
@@ -113,6 +117,7 @@ public final class CastRelay {
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
             if (!BeamNet.canSend(player, BeamPayloads.STREAM)) continue;
             beam.add(player);
+            StreamPort.offer(player);
             everyone &= DECODERS.getOrDefault(player.getUUID(), BeamPayloads.H264);
         }
         byte[] out = new BeamPayloads.Codecs(everyone).encode();
@@ -251,10 +256,37 @@ public final class CastRelay {
         session.budget = Math.max(0, session.budget - data.length);
         byte[] out = new BeamPayloads.Stream(session.display, session.caster, payload.seq(), payload.width(), payload.height(), data).encode();
         deliver(server, player, session, BeamPayloads.STREAM, out, viewer -> {
-            long behind = Congestion.pending(viewer.connection);
+            StreamLink link = StreamPort.link(viewer.getUUID());
+            long behind = link != null ? link.queued() : Congestion.pending(viewer.connection);
             TsUnits.Gate gate = session.viewerGates.computeIfAbsent(viewer.getUUID(), id -> new TsUnits.Gate());
-            return gate.pass(unitStart, key, behind > VIEWER_QUEUE_LIMIT, behind < VIEWER_QUEUE_LIMIT / 2);
+            if (!gate.pass(unitStart, key, behind > VIEWER_QUEUE_LIMIT, behind < VIEWER_QUEUE_LIMIT / 2)) return false;
+            // over the viewer's stream connection when it has one
+            if (link != null && link.send(StreamLink.STREAM, out)) {
+                return false;
+            }
+            return true;
         });
+    }
+
+    /** Server thread: a frame from a player's stream connection, as if it came over the game connection. */
+    static void fromLink(MinecraftServer server, UUID id, int type, byte[] data) {
+        ServerPlayer player = server.getPlayerList().getPlayer(id);
+        if (player == null) return;
+        try {
+            if (type == StreamLink.STREAM) stream(server, player, BeamPayloads.Stream.decode(data));
+            else if (type == StreamLink.FRAME) frame(server, player, BeamPayloads.Frame.decode(data));
+        } catch (IllegalArgumentException e) {
+            // a broken frame is ignored like a broken packet
+        }
+    }
+
+    /** Server thread: a player's stream connection broke; what it was sent is lost, so its casts start at a key frame. */
+    static void linkLost(UUID player) {
+        for (Session session : sessions()) {
+            TsUnits.Gate gate = session.viewerGates.get(player);
+            if (gate != null) gate.drop();
+            if (session.caster.equals(player)) session.budgetGate.drop();
+        }
     }
 
     /** How much video may wait on a viewer's connection before frames are left out for them. */

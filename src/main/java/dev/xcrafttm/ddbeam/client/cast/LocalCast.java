@@ -14,6 +14,7 @@ import dev.xcrafttm.ddbeam.client.capture.Sources;
 import dev.xcrafttm.ddbeam.client.capture.WaylandPortal;
 import dev.xcrafttm.ddbeam.net.BeamPayloads;
 import dev.xcrafttm.ddbeam.net.Congestion;
+import dev.xcrafttm.ddbeam.net.StreamLink;
 import dev.xcrafttm.ddbeam.net.TsUnits;
 import dev.xcrafttm.ddbeam.client.BeamClientNet;
 import net.minecraft.client.Minecraft;
@@ -254,13 +255,20 @@ public final class LocalCast {
             while (!ended) {
                 byte[] piece = outbox.take();
                 if (piece == END) return;
+                StreamLink link = ClientLink.current();
                 while (!NO_GATE && !ended) {
-                    long onConnection = queued.get() + Congestion.pending(Minecraft.getInstance().getConnection());
+                    long onConnection = link != null ? link.queued()
+                            : queued.get() + Congestion.pending(Minecraft.getInstance().getConnection());
                     if (onConnection < PACE_LIMIT && probe.extraMs() < PACE_LATE_MS) break;
                     Thread.sleep(2);
                 }
                 outboxBytes.addAndGet(-piece.length);
                 int s = seq++;
+                // over the stream connection when there is one, next to the game's
+                if (link != null && Casts.local() == this
+                        && link.send(StreamLink.STREAM, new BeamPayloads.Stream(display, NOBODY, s, width, height, piece).encode())) {
+                    continue;
+                }
                 queued.addAndGet(piece.length);
                 Minecraft.getInstance().execute(() -> {
                     queued.addAndGet(-piece.length);
@@ -272,6 +280,11 @@ public final class LocalCast {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    /** Client thread: the stream connection broke; what was on it is lost, so the video picks up at a key frame. */
+    void linkLost() {
+        gate.drop();
     }
 
     /** How much longer than usual the game connection takes now (see DelayProbe). */

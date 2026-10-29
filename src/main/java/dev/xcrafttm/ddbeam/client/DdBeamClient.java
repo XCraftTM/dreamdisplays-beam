@@ -9,6 +9,7 @@ import com.mojang.brigadier.context.CommandContext;
 import dev.xcrafttm.ddbeam.client.capture.CaptureSource;
 import dev.xcrafttm.ddbeam.client.capture.Sources;
 import dev.xcrafttm.ddbeam.client.cast.CastFeed;
+import dev.xcrafttm.ddbeam.client.cast.ClientLink;
 import dev.xcrafttm.ddbeam.client.cast.Casts;
 import dev.xcrafttm.ddbeam.client.cast.LocalCast;
 import dev.xcrafttm.ddbeam.client.cast.Targets;
@@ -74,6 +75,7 @@ public final class DdBeamClient implements ClientModInitializer {
         receive(BeamPayloads.NOTICE, data -> Casts.onNotice(BeamPayloads.Notice.decode(data)));
         receive(BeamPayloads.PROBE, Casts::onProbe);
         receive(BeamPayloads.CODECS, data -> Casts.onCodecs(BeamPayloads.Codecs.decode(data)));
+        receive(BeamPayloads.PORT, data -> ClientLink.onPort(BeamPayloads.Port.decode(data)));
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(Casts::clear));
 
         ClientTickEvents.END_CLIENT_TICK.register(mc -> {

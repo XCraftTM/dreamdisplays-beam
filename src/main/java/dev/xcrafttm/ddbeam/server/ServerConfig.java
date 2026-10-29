@@ -29,6 +29,13 @@ public final class ServerConfig {
     public int maxKilobytesPerSecond = 4096;
     /** Per caster: frames per second that are relayed at most. */
     public int maxFps = 30;
+    /**
+     * A TCP port for casts' video next to the game connection (0: off), so the game's packets never wait behind
+     * video. Players whose Beam cannot reach it use the game connection.
+     */
+    public int streamPort = 0;
+    /** The host players reach the stream port at ("": the one they joined the game at), e.g. behind a proxy. */
+    public String streamHost = "";
 
     public static ServerConfig get() {
         return instance;

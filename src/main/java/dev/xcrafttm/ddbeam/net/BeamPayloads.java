@@ -23,13 +23,15 @@ public final class BeamPayloads {
     public static final String PROBE = "probe";
     /** What a player's client can decode ({@link Hello}), and what everyone on the server can ({@link Codecs}). */
     public static final String HELLO = "hello", CODECS = "codecs";
+    /** The server's stream port, for the video next to the game connection ({@link Port}, see StreamLink). */
+    public static final String PORT = "port";
     /** Video codecs, as bits. */
     public static final int H264 = 1, HEVC = 2;
     /** Beam's protocol version in {@link Hello}. */
     public static final int PROTOCOL = 2;
     /** Channels a client sends on, and the ones the server sends on. */
     public static final String[] TO_SERVER = {START, STOP, FRAME, STREAM, AUDIO, PROBE, HELLO};
-    public static final String[] TO_CLIENT = {STOP, FRAME, STREAM, AUDIO, NOTICE, PROBE, CODECS};
+    public static final String[] TO_CLIENT = {STOP, FRAME, STREAM, AUDIO, NOTICE, PROBE, CODECS, PORT};
 
     private BeamPayloads() {
     }
@@ -70,6 +72,18 @@ public final class BeamPayloads {
 
         public static Codecs decode(byte[] data) {
             return new Codecs(new Wire.Reader(data).varInt());
+        }
+    }
+
+    /** To a client: the server's stream port, the token to introduce itself with, and the host ("": the game's). */
+    public record Port(int port, byte[] token, String host) {
+        public byte[] encode() {
+            return new Wire.Writer().varInt(port).bytes(token).string(host == null ? "" : host).done();
+        }
+
+        public static Port decode(byte[] data) {
+            Wire.Reader r = new Wire.Reader(data);
+            return new Port(r.varInt(), r.bytes(64), r.string(255));
         }
     }
 

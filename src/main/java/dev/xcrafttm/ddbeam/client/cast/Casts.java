@@ -310,5 +310,6 @@ public final class Casts {
         HIDDEN.clear();
         codecs = BeamPayloads.H264;
         helloSent = false;
+        ClientLink.close();
     }
 }

@@ -19,13 +19,20 @@ sound.
 - The picture is drawn through Dream Displays' own display renderer, so it sits exactly where its videos do, with
   the display's rotation, brightness and shader-pack handling. It works on displays without a video too.
 - **Streaming**: with Beam on the server (or in singleplayer / LAN), players within 96 blocks of the display see
-  the cast at its own resolution and frame rate. It goes out as H.264 video (about 1.4 MB/s for 1440p60, instead
-  of about 17 MB/s as JPEG frames), encoded by the same FFmpeg process that captures, on the GPU where there is
-  one: NVIDIA NVENC, AMD AMF, Intel Quick Sync, Windows Media Foundation, Linux VAAPI (AMD/Intel), macOS
-  VideoToolbox; libx264 on the CPU otherwise (`streamEncoder` / `streamBitrateKbps` in the config). Players decode
-  it with Dream Displays' FFmpeg, in hardware where possible. A player who comes into range has the picture within
-  two seconds (a key frame every two seconds). The server only passes the data on (it checks who may cast and
-  limits the bandwidth); an FFmpeg without any H.264 encoder falls back to JPEG frames.
+  the cast at its own resolution and frame rate. It goes out as H.264 video, or as **HEVC** (about a third less)
+  when every Beam player on the server can decode it, at a **variable bit rate** capped at about 12 Mbit/s for
+  1440p60: a calm picture takes a fraction of that. It is encoded by the same FFmpeg process that captures, on the
+  GPU where there is one: NVIDIA NVENC, AMD AMF, Intel Quick Sync, Windows Media Foundation, Linux VAAPI
+  (AMD/Intel), macOS VideoToolbox; libx264 on the CPU otherwise (`streamEncoder`, `streamCodec`,
+  `streamBitrateKbps` in the config). Players decode it with Dream Displays' FFmpeg, in hardware where possible. A
+  player who comes into range has the picture within two seconds (a key frame every two seconds). The server only
+  passes the data on (it checks who may cast and limits the bandwidth); an FFmpeg without any H.264 encoder falls
+  back to JPEG frames.
+- **No lag from casting**: the video goes out paced, so the game's own packets never wait behind it (a delay probe
+  echoed by the server measures what they go through). When a connection cannot keep up, whole frames are skipped up
+  to the next key frame: viewers see the last whole picture a little longer, never a broken one, and the caster's
+  ping stays normal (tested with a 4 Mbit/s upload: mostly 20 to 140 ms, instead of climbing to 21 s). The server
+  does the same for each viewer. Optionally the video goes over a port of its own (`streamPort`).
 - **Sound**:
   - Screen and application casts send what the computer plays to the other players only. You don't hear it twice,
     since you already hear it from your computer. On Windows the game's own sound is left out (process loopback,
@@ -55,7 +62,8 @@ sound.
 Put `dreamdisplays-beam-paper-0.2.2.jar` into `plugins/` next to Dream Displays. It relays casts like the Fabric
 server part: who may cast, the 96 block range, the bandwidth limit; it never decodes anything. Settings in
 `plugins/DreamDisplaysBeam/config.yml` (same as `ddbeam-server.json` below); the permission `ddbeam.cast.any`
-(default: operators) lets a player cast onto displays they do not own. Folia is not supported.
+(default: operators) lets a player cast onto displays they do not own. `streamPort` / `streamHost` work as on
+Fabric (see the table below). Folia is not supported.
 
 ## Platforms
 
@@ -93,6 +101,8 @@ and "Jukebox/Note Blocks" volumes. Server: `config/ddbeam-server.json`:
 | viewDistance | 96 | blocks around the display that receive a cast |
 | maxKilobytesPerSecond | 4096 | per caster; data above it is dropped (1440p60 needs about 1500) |
 | maxFps | 30 | per caster |
+| streamPort | 0 | a TCP port for casts' video next to the game connection (0: off); open it like the game port. Players who cannot reach it use the game connection |
+| streamHost | "" | the host players reach the stream port at ("": the one they joined at), e.g. behind a proxy |
 
 ## Building and testing
 
