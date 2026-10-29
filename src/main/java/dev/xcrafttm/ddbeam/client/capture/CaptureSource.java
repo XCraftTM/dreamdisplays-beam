@@ -1,5 +1,6 @@
 package dev.xcrafttm.ddbeam.client.capture;
 
+import dev.xcrafttm.ddbeam.Texts;
 import dev.xcrafttm.ddbeam.client.BeamConfig;
 import net.minecraft.network.chat.Component;
 
@@ -59,11 +60,11 @@ public record CaptureSource(Kind kind, int index, String name, int x, int y, int
 
     public Component label() {
         return switch (kind) {
-            case MONITOR -> portal() ? Component.translatable("ddbeam.source.portal.monitor") : width > 0 ? Component.translatable("ddbeam.source.monitor", index + 1, width, height)
-                    : Component.translatable("ddbeam.source.monitor.plain", index + 1);
-            case CAMERA -> Component.literal(title);
-            case WINDOW -> portal() ? Component.translatable("ddbeam.source.portal.window") : Component.literal(name);
-            case TEST -> Component.translatable("ddbeam.source.test");
+            case MONITOR -> portal() ? Texts.tr("ddbeam.source.portal.monitor") : width > 0 ? Texts.tr("ddbeam.source.monitor", index + 1, width, height)
+                    : Texts.tr("ddbeam.source.monitor.plain", index + 1);
+            case CAMERA -> Texts.lit(title);
+            case WINDOW -> portal() ? Texts.tr("ddbeam.source.portal.window") : Texts.lit(name);
+            case TEST -> Texts.tr("ddbeam.source.test");
         };
     }
 
@@ -99,17 +100,24 @@ public record CaptureSource(Kind kind, int index, String name, int x, int y, int
                 }
             }
             case CAMERA -> {
+                // the mode picked in the dialog (size, frame rate, format), else cameraSize from the config
+                List<String> mode = CameraModes.inputArgs(this, Sources.os(), fps);
+                List<String> size = !mode.isEmpty() || config.cameraSize.isBlank() ? List.of() : List.of("-video_size", config.cameraSize);
                 if (windows) {
                     args.addAll(List.of("-f", "dshow", "-rtbufsize", "64M"));
-                    if (!config.cameraSize.isBlank()) args.addAll(List.of("-video_size", config.cameraSize));
+                    args.addAll(mode);
+                    args.addAll(size);
                     args.addAll(List.of("-i", "video=" + name));
                 } else if (mac) {
-                    args.addAll(List.of("-f", "avfoundation", "-framerate", "30"));
-                    if (!config.cameraSize.isBlank()) args.addAll(List.of("-video_size", config.cameraSize));
+                    args.addAll(List.of("-f", "avfoundation"));
+                    if (mode.isEmpty()) args.addAll(List.of("-framerate", "30"));
+                    args.addAll(mode);
+                    args.addAll(size);
                     args.addAll(List.of("-i", index + ":none"));
                 } else {
                     args.addAll(List.of("-f", "v4l2"));
-                    if (!config.cameraSize.isBlank()) args.addAll(List.of("-video_size", config.cameraSize));
+                    args.addAll(mode);
+                    args.addAll(size);
                     args.addAll(List.of("-i", name));
                 }
             }

@@ -2,6 +2,7 @@ package dev.xcrafttm.ddbeam.test;
 
 import com.dreamdisplays.platform.client.displays.DisplayScreen;
 import com.dreamdisplays.platform.client.ui.DisplayMenu;
+import dev.xcrafttm.ddbeam.client.Mc;
 import dev.xcrafttm.ddbeam.client.capture.CaptureSource;
 import dev.xcrafttm.ddbeam.client.capture.Sources;
 import dev.xcrafttm.ddbeam.client.cast.CastFeed;
@@ -45,7 +46,22 @@ public final class TestDriver implements ClientModInitializer {
     public void onInitializeClient() {
         if (System.getProperty("ddbeam.test.mode") == null) return;
         ClientTickEvents.END_CLIENT_TICK.register(this::tick);
+        //#if MC < 1.20
+        // no --quickPlaySingleplayer before 1.20: open the test world from the title screen
+        if (MODE.equals("viewer") || MODE.equals("stream") && System.getProperty("ddbeam.test.server") != null) return;
+        net.fabricmc.fabric.api.client.screen.v1.ScreenEvents.AFTER_INIT.register((mc, screen, w, h) -> {
+            if (!(screen instanceof net.minecraft.client.gui.screens.TitleScreen) || worldOpened) return;
+            worldOpened = true;
+            //#if MC >= 1.19
+            mc.tell(() -> mc.createWorldOpenFlows().loadLevel(screen, "beam-test"));
+            //#else
+            mc.tell(() -> mc.loadLevel("beam-test"));
+            //#endif
+        });
+        //#endif
     }
+
+    private boolean worldOpened;
 
     private void tick(Minecraft mc) {
         long now = System.currentTimeMillis();
@@ -73,7 +89,7 @@ public final class TestDriver implements ClientModInitializer {
         }
         // the scene places the player two seconds after joining
         if (now - sceneAt < 4000) return;
-        Targets.Target target = targets.getFirst();
+        Targets.Target target = targets.get(0);
         if (MODE.equals("click")) {
             clickTick(mc, now, target);
             return;
@@ -82,15 +98,22 @@ public final class TestDriver implements ClientModInitializer {
             // game frame rate before the cast, for comparison
             if (now - sceneAt > 8000 && stepAt == 0) {
                 stepAt = now;
-                TestScene.LOG.info("Game FPS without cast: {}", mc.getFps());
+                TestScene.LOG.info("Game FPS without cast: {}", fps(mc));
             }
             return;
         }
         if (castAt == 0) {
             stepAt = 0;
             if (MODE.equals("stream")) {
-                boolean lan = mc.getSingleplayerServer() != null
-                        && mc.getSingleplayerServer().publishServer(MinecraftServer.MultiplayerScope.LAN, true, 25700);
+                var server = mc.getSingleplayerServer();
+                //#if MC >= 26.3
+                boolean lan = server != null && server.publishServer(MinecraftServer.MultiplayerScope.LAN, true, 25700);
+                //#elif MC >= 26.2
+                boolean lan = server != null && server.publishServer(MinecraftServer.MultiplayerScope.LAN,
+                        net.minecraft.world.level.GameType.CREATIVE, true, 25700);
+                //#else
+                boolean lan = server != null && server.publishServer(net.minecraft.world.level.GameType.CREATIVE, true, 25700);
+                //#endif
                 TestScene.LOG.info("Open to LAN on 25700: {}", lan);
             }
             CaptureSource source = source(mc);
@@ -121,14 +144,22 @@ public final class TestDriver implements ClientModInitializer {
             case 1 -> {
                 // look at it from the side too (Dream Displays' renderer draws it in perspective)
                 if (now - stepAt < 500) return;
+                //#if MC >= 1.21.11
                 mc.player.snapTo(5.5, -60, 6.5, 145, 5);
+                //#else
+                mc.player.moveTo(5.5, -60, 6.5, 145, 5);
+                //#endif
                 step++;
                 stepAt = now;
             }
             case 2 -> {
                 if (now - stepAt < 1500) return;
                 shot(mc, "cast-side");
+                //#if MC >= 1.21.11
                 mc.player.snapTo(0.5, -60, 11.5, 180, 2);
+                //#else
+                mc.player.moveTo(0.5, -60, 11.5, 180, 2);
+                //#endif
                 DisplayScreen screen = screenOf(target.id());
                 if (screen == null) {
                     TestScene.LOG.error("No DisplayScreen for {}", target.id());
@@ -142,32 +173,47 @@ public final class TestDriver implements ClientModInitializer {
             case 3 -> {
                 if (now - stepAt < 2500) return;
                 shot(mc, "menu");
-                Screen menu = mc.gui.screen();
-                mc.setScreenAndShow(new BeamScreen(menu, target));
+                Screen menu = Mc.screen();
+                Mc.show(new BeamScreen(menu, target));
                 step++;
                 stepAt = now;
             }
             case 4 -> {
                 if (now - stepAt < 5000) return;
                 shot(mc, "dialog");
-                if (mc.gui.screen() instanceof BeamScreen dialog) dialog.openSelect(0);
+                if (Mc.screen() instanceof BeamScreen dialog) hoverShare(mc, dialog);
+                step = 41;
+                stepAt = now;
+            }
+            case 41 -> {
+                if (now - stepAt < 800) return;
+                shot(mc, "dialog-share-tip");
+                if (Mc.screen() instanceof BeamScreen dialog) dialog.openSelect(0);
                 step = 40;
                 stepAt = now;
             }
             case 40 -> {
                 if (now - stepAt < 800) return;
                 shot(mc, "dialog-select");
-                if (mc.gui.screen() instanceof BeamScreen dialog) {
-                    dialog.openSelect(-1);
-                    dialog.showTab(2);
+                if (Mc.screen() instanceof BeamScreen dialog) {
+                    // casting a camera: its mode list too
+                    dialog.openSelect(SOURCE.startsWith("camera") ? 2 : -1);
+                    if (!SOURCE.startsWith("camera")) dialog.showTab(2);
                 }
+                step = SOURCE.startsWith("camera") ? 42 : 5;
+                stepAt = now;
+            }
+            case 42 -> {
+                if (now - stepAt < 800) return;
+                shot(mc, "dialog-modes");
+                if (Mc.screen() instanceof BeamScreen dialog) dialog.openSelect(-1);
                 step = 5;
                 stepAt = now;
             }
             case 5 -> {
                 if (now - stepAt < 9000) return;
                 shot(mc, "dialog-cameras");
-                mc.setScreenAndShow(null);
+                Mc.show(null);
                 status();
                 Casts.stop();
                 doneAt = now;
@@ -198,7 +244,7 @@ public final class TestDriver implements ClientModInitializer {
     /** Opens the dialog and waits for real mouse clicks (driven from outside), logging what is chosen. */
     private void clickTick(Minecraft mc, long now, Targets.Target target) {
         if (castAt == 0) {
-            mc.setScreenAndShow(new BeamScreen(null, target));
+            Mc.show(new BeamScreen(null, target));
             castAt = now;
             stepAt = now;
             TestScene.LOG.info("Dialog open, waiting for clicks");
@@ -207,7 +253,7 @@ public final class TestDriver implements ClientModInitializer {
         if (now - stepAt < 1000) return;
         stepAt = now;
         Object selected = null;
-        if (mc.gui.screen() instanceof BeamScreen dialog) {
+        if (Mc.screen() instanceof BeamScreen dialog) {
             try {
                 var field = BeamScreen.class.getDeclaredField("selected");
                 field.setAccessible(true);
@@ -217,9 +263,9 @@ public final class TestDriver implements ClientModInitializer {
             }
         }
         TestScene.LOG.info("Click test: screen {}, selected {}, casting {}",
-                mc.gui.screen() == null ? "none" : mc.gui.screen().getClass().getSimpleName(), selected,
+                Mc.screen() == null ? "none" : Mc.screen().getClass().getSimpleName(), selected,
                 Casts.local() == null ? "no" : Casts.local().source.label().getString());
-        if (now - castAt > 90_000 || (Casts.local() != null && now - castAt > 3000 && mc.gui.screen() == null)) {
+        if (now - castAt > 90_000 || (Casts.local() != null && now - castAt > 3000 && Mc.screen() == null)) {
             shot(mc, "click");
             Casts.stop();
             doneAt = now;
@@ -253,7 +299,7 @@ public final class TestDriver implements ClientModInitializer {
     }
 
     private static void status() {
-        TestScene.LOG.info("Game FPS: {}", Minecraft.getInstance().getFps());
+        TestScene.LOG.info("Game FPS: {}", fps(Minecraft.getInstance()));
         LocalCast cast = Casts.local();
         if (cast != null) {
             TestScene.LOG.info("Local cast: {} {}x{} @{}, {} frames, shared {} ({}, {} KB sent), audio '{}'", cast.source.label().getString(),
@@ -281,8 +327,74 @@ public final class TestDriver implements ClientModInitializer {
         return null;
     }
 
+    /**
+     * Puts the game's mouse position (not the real pointer) on the dialog's "Stream to players" check box, so the
+     * next frame draws its tooltip: greyed out with the reason when the server has no Beam relay.
+     */
+    private static void hoverShare(Minecraft mc, BeamScreen dialog) {
+        try {
+            java.lang.reflect.Field hitsField = BeamScreen.class.getDeclaredField("hits");
+            java.lang.reflect.Field kField = BeamScreen.class.getDeclaredField("k");
+            hitsField.setAccessible(true);
+            kField.setAccessible(true);
+            float k = kField.getFloat(dialog);
+            String on = dev.xcrafttm.ddbeam.Texts.tr("ddbeam.dialog.share.tip").getString();
+            String off = dev.xcrafttm.ddbeam.Texts.tr("ddbeam.dialog.share.off.title").getString();
+            for (Object hit : (List<?>) hitsField.get(dialog)) {
+                List<?> tip = (List<?>) call(hit, "tooltip");
+                if (tip == null || tip.isEmpty()) continue;
+                String first = ((net.minecraft.network.chat.Component) tip.get(0)).getString();
+                if (!first.equals(on) && !first.equals(off)) continue;
+                Object rect = call(hit, "rect");
+                double vx = (int) call(rect, "x") + 6, vy = (int) call(rect, "y") + (int) call(rect, "h") / 2.0;
+                var window = mc.getWindow();
+                double px = window.getScreenWidth() / (double) window.getGuiScaledWidth();
+                double py = window.getScreenHeight() / (double) window.getGuiScaledHeight();
+                setMouse(mc, vx / k * px, vy / k * py);
+                TestScene.LOG.info("Hovering 'Stream to players' ({}): {}", first.equals(on) ? "enabled" : "disabled", first);
+                return;
+            }
+            TestScene.LOG.error("No 'Stream to players' check box found");
+        } catch (ReflectiveOperationException e) {
+            TestScene.LOG.error("hoverShare", e);
+        }
+    }
+
+    private static Object call(Object target, String method) throws ReflectiveOperationException {
+        var m = target.getClass().getDeclaredMethod(method);
+        m.setAccessible(true);
+        return m.invoke(target);
+    }
+
+    private static void setMouse(Minecraft mc, double x, double y) throws ReflectiveOperationException {
+        // the dev client runs with Mojang's names, on every version
+        java.lang.reflect.Field fx = net.minecraft.client.MouseHandler.class.getDeclaredField("xpos");
+        java.lang.reflect.Field fy = net.minecraft.client.MouseHandler.class.getDeclaredField("ypos");
+        fx.setAccessible(true);
+        fy.setAccessible(true);
+        fx.setDouble(mc.mouseHandler, x);
+        fy.setDouble(mc.mouseHandler, y);
+    }
+
+    private static String fps(Minecraft mc) {
+        //#if MC >= 1.19
+        return String.valueOf(mc.getFps());
+        //#else
+        return mc.fpsString;
+        //#endif
+    }
+
     private static void shot(Minecraft mc, String name) {
-        Screenshot.grab(mc.gameDirectory, PREFIX + "-" + name + ".png", mc.gameRenderer.mainRenderTarget(), 1,
+        //#if MC >= 26.2
+        var target = mc.gameRenderer.mainRenderTarget();
+        //#else
+        var target = mc.getMainRenderTarget();
+        //#endif
+        //#if MC >= 1.21.11
+        Screenshot.grab(mc.gameDirectory, PREFIX + "-" + name + ".png", target, 1,
+        //#else
+        Screenshot.grab(mc.gameDirectory, PREFIX + "-" + name + ".png", target,
+        //#endif
                 msg -> TestScene.LOG.info("Screenshot {}: {}", name, msg.getString()));
     }
 }

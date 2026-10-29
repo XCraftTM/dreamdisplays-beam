@@ -1,10 +1,17 @@
 package dev.xcrafttm.ddbeam.client.capture;
 
 import dev.xcrafttm.ddbeam.DdBeam;
+//#if MC >= 26.3
 import org.lwjgl.sdl.SDLStdinc;
 import org.lwjgl.sdl.SDLVideo;
 import org.lwjgl.sdl.SDL_Rect;
 import org.lwjgl.system.MemoryStack;
+//#else
+import org.lwjgl.PointerBuffer;
+import org.lwjgl.glfw.GLFW;
+import org.lwjgl.glfw.GLFWVidMode;
+import org.lwjgl.system.MemoryStack;
+//#endif
 
 import java.io.File;
 import java.io.IOException;
@@ -59,10 +66,10 @@ public final class Sources {
                 || System.getenv("WAYLAND_DISPLAY") != null);
     }
 
-    /** The monitors. Call on the render thread (SDL). */
+    /** The monitors. Call on the render thread (SDL, or GLFW before 26.3). */
     public static List<CaptureSource> monitors() {
         if (wayland()) return List.of(CaptureSource.portal(CaptureSource.Kind.MONITOR));
-        List<CaptureSource> sdl = sdlMonitors();
+        List<CaptureSource> sdl = windowSystemMonitors();
         if (!os().equals("mac")) return sdl;
         // AVFoundation numbers its screens itself; take the sizes from SDL when both see the same count
         List<CaptureSource> out = new ArrayList<>();
@@ -76,9 +83,10 @@ public final class Sources {
         return out;
     }
 
-    private static List<CaptureSource> sdlMonitors() {
+    private static List<CaptureSource> windowSystemMonitors() {
         List<CaptureSource> out = new ArrayList<>();
         try {
+            //#if MC >= 26.3
             IntBuffer ids = SDLVideo.SDL_GetDisplays();
             if (ids != null) {
                 try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -91,6 +99,22 @@ public final class Sources {
                     SDLStdinc.SDL_free(ids);
                 }
             }
+            //#else
+            PointerBuffer monitors = GLFW.glfwGetMonitors();
+            if (monitors != null) {
+                try (MemoryStack stack = MemoryStack.stackPush()) {
+                    IntBuffer x = stack.mallocInt(1);
+                    IntBuffer y = stack.mallocInt(1);
+                    for (int i = 0; i < monitors.remaining(); i++) {
+                        long monitor = monitors.get(i);
+                        GLFWVidMode mode = GLFW.glfwGetVideoMode(monitor);
+                        if (mode == null) continue;
+                        GLFW.glfwGetMonitorPos(monitor, x, y);
+                        out.add(new CaptureSource(CaptureSource.Kind.MONITOR, i, "", x.get(0), y.get(0), mode.width() & ~1, mode.height() & ~1));
+                    }
+                }
+            }
+            //#endif
         } catch (RuntimeException | LinkageError e) {
             DdBeam.LOGGER.warn("Could not list the monitors: {}", e.toString());
         }

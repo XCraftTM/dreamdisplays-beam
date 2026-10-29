@@ -7,6 +7,10 @@ sound.
 - **Cast button in Dream Displays' display menu** (next to the delete button) and a key (`B`, look at a display):
   opens the cast dialog with tabs for screens, applications and cameras, live preview tiles, resolution
   (480p – 1440p) and frame rate (15 / 30 / 60) select menus, "Stream to players" and the sound switch.
+  "Stream to players" is greyed out and struck through, with a tooltip saying why, on a server without Beam.
+- **Camera mode**: for a camera, the dialog lists what the camera itself can send (size, frame rate and format, as
+  FFmpeg reports them) and remembers the choice per camera. Many webcams reach 1080p at 60 FPS only as MJPEG and
+  fall back to a slow uncompressed mode by default.
 - The picture is drawn through Dream Displays' own display renderer, so it sits exactly where its videos do, with
   the display's rotation, brightness and shader-pack handling. It works on displays without a video too.
 - **Streaming**: with Beam on the server (or in singleplayer / LAN), players within 96 blocks of the display see
@@ -27,7 +31,14 @@ sound.
 
 ## Requirements
 
-- Minecraft 26.3, Fabric Loader 0.19.5+, Fabric API, Dream Displays 1.10.6+, Java 25.
+- Fabric Loader 0.19.5+, Fabric API, Dream Displays 1.10.6+, on every Minecraft version Dream Displays supports:
+
+  | Minecraft | 1.18.2 | 1.19.4 | 1.20.1 | 1.21.1 | 1.21.11 | 26.1.2 | 26.2 | 26.3 |
+  |---|---|---|---|---|---|---|---|---|
+  | Java | 17 | 17 | 17 | 21 | 21 | 25 | 25 | 25 |
+
+  One jar per version: `dreamdisplays-beam-<version>+<minecraft>.jar`. Players on different Minecraft versions
+  can't join the same server anyway, and the cast data is the same on every version.
 - FFmpeg: the one Dream Displays downloads is used (else the one on the PATH, or `ffmpegPath` in the config).
 - For streaming to others: Beam on the server too: the mod itself on a Fabric server, or the **Paper plugin**
   (`dreamdisplays-beam-paper-<version>.jar`, for Paper and Purpur with Dream Displays' Paper plugin; Dream Displays
@@ -65,7 +76,8 @@ Notes on what was tested: everything on Windows 11. **Linux and macOS are implem
 ## Settings
 
 Client: `config/ddbeam.json` (resolution, frame rate, JPEG quality, fit/fill/stretch, cursor, share frame rate,
-Windows grabber, camera size, sound options, volume, audio range). Server: `config/ddbeam-server.json`:
+Windows grabber, camera size, camera modes, sound options, volume, audio range). Cast sound follows the master
+and "Jukebox/Note Blocks" volumes. Server: `config/ddbeam-server.json`:
 
 | field | default | |
 |---|---|---|
@@ -79,7 +91,8 @@ Windows grabber, camera size, sound options, volume, audio range). Server: `conf
 
 ```bash
 ./gradlew build                      # build/libs/dreamdisplays-beam-0.1.0+26.3.jar
-./gradlew runAutotest                # test scene: casts the test pattern, screenshots in run/autotest/26.3/screenshots
+./gradlew build -Pminecraft_version=1.20.1   # any version from versions/*.properties
+./gradlew runAutotest                # test scene: casts the test pattern, screenshots in run/autotest/<mc>/screenshots
 ./gradlew runAutotest -PtestSource=monitor1
 ./gradlew runAutotest -PtestMode=stream   # caster, opens the world to LAN on port 25700 ...
 ./gradlew runViewer                       # ... and a second player that joins it and screenshots the cast
@@ -88,7 +101,9 @@ Windows grabber, camera size, sound options, volume, audio range). Server: `conf
 Paper plugin: `./gradlew :paper:build` (`paper/build/libs/`). Its test: a Paper server with Dream Displays' Paper
 plugin, `paper/build/libs/ddbeam-paper-testscene.jar` (builds the room and the display) and the plugin on port
 25700 (`online-mode=false`, `white-list=false`), then `./gradlew runCaster -PtestSource=monitor1` and
-`./gradlew runViewer`.
+`./gradlew runViewer`. `./gradlew runCaster -PtestMode=cast` on a server without Beam shows the greyed-out
+"Stream to players" with its tooltip.
 
 On Windows, run `./gradlew` from Git Bash: `gradlew.bat` breaks on the `&` in this folder's path.
-The test world `run/autotest/26.3/saves/beam-test` is a vanilla flat world.
+The test worlds `run/autotest/<mc>/saves/beam-test` are vanilla flat worlds, made with each version's vanilla
+server (`level-type=flat`). Before 1.20 (no quick play) the test driver opens the world from the title screen.

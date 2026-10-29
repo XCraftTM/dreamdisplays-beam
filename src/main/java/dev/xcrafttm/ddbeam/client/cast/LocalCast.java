@@ -1,5 +1,6 @@
 package dev.xcrafttm.ddbeam.client.cast;
 
+import dev.xcrafttm.ddbeam.Texts;
 import dev.xcrafttm.ddbeam.DdBeam;
 import dev.xcrafttm.ddbeam.client.BeamConfig;
 import dev.xcrafttm.ddbeam.client.audio.Adpcm;
@@ -76,7 +77,7 @@ public final class LocalCast {
                 if (settings.audio()) startAudio();
             } catch (Exception e) {
                 DdBeam.LOGGER.warn("Could not start the cast: {}", e.toString());
-                fail(Component.translatable("ddbeam.error.start", e.getMessage() == null ? e.toString() : e.getMessage()));
+                fail(Texts.tr("ddbeam.error.start", e.getMessage() == null ? e.toString() : e.getMessage()));
             }
         }, "ddbeam-cast-start");
         starter.setDaemon(true);
@@ -141,7 +142,7 @@ public final class LocalCast {
     }
 
     private void onAudioError(String error) {
-        Minecraft.getInstance().execute(() -> Casts.message(Component.translatable("ddbeam.error.audio", error)));
+        Minecraft.getInstance().execute(() -> Casts.message(Texts.tr("ddbeam.error.audio", error)));
     }
 
     /** Capture thread: collects 40 ms packets, plays them here (cameras) and streams them. */
@@ -224,9 +225,9 @@ public final class LocalCast {
         if (ended) return;
         String reason = capture.source().portal() ? WaylandPortal.reason(capture.exitCode()) : null;
         if (reason != null) {
-            fail(Component.translatable(reason));
+            fail(Texts.tr(reason));
         } else {
-            fail(Component.translatable("ddbeam.error.ended", lastError.isBlank() ? "-" : lastError.lines().reduce((a, b) -> b).orElse("")));
+            fail(Texts.tr("ddbeam.error.ended", lastError.isBlank() ? "-" : lastError.lines().reduce((a, b) -> b).orElse("")));
         }
     }
 
@@ -241,7 +242,7 @@ public final class LocalCast {
     /** The server's answer to {@link BeamPayloads.Start}. Client thread. */
     void onNotice(String key) {
         serverShares = key.equals("shared");
-        Casts.message(Component.translatable("ddbeam.notice." + key));
+        Casts.message(Texts.tr("ddbeam.notice." + key));
     }
 
     public boolean sharedWithOthers() {

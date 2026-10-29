@@ -50,11 +50,22 @@ public final class TestScene implements ModInitializer {
     }
 
     static void run(MinecraftServer server, String command) {
+        //#if MC >= 1.19
         server.getCommands().performPrefixedCommand(server.createCommandSourceStack().withSource(new CommandSource() {
+        //#else
+        server.getCommands().performCommand(server.createCommandSourceStack().withSource(new CommandSource() {
+        //#endif
+            //#if MC >= 1.19
             @Override
             public void sendSystemMessage(Component message) {
                 LOG.info("/{}: {}", command, message.getString());
             }
+            //#else
+            @Override
+            public void sendMessage(Component message, java.util.UUID sender) {
+                LOG.info("/{}: {}", command, message.getString());
+            }
+            //#endif
 
             @Override
             public boolean acceptsSuccess() {

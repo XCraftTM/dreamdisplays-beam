@@ -1,5 +1,6 @@
 package dev.xcrafttm.ddbeam.client;
 
+import dev.xcrafttm.ddbeam.Texts;
 import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
@@ -14,22 +15,38 @@ import dev.xcrafttm.ddbeam.client.cast.Targets;
 import dev.xcrafttm.ddbeam.client.ui.BeamScreen;
 import dev.xcrafttm.ddbeam.net.BeamPayloads;
 import net.fabricmc.api.ClientModInitializer;
+//#if MC >= 1.19
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
+//#else
+import net.fabricmc.fabric.api.client.command.v1.ClientCommandManager;
+import net.fabricmc.fabric.api.client.command.v1.FabricClientCommandSource;
+//#endif
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+//#if MC >= 26.1
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
+//#else
+import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+//#endif
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.Identifier;
 
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+//#if MC >= 26.1
 import static net.fabricmc.fabric.api.client.command.v2.ClientCommands.argument;
 import static net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal;
+//#elif MC >= 1.19
+import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.argument;
+import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.literal;
+//#else
+import static net.fabricmc.fabric.api.client.command.v1.ClientCommandManager.argument;
+import static net.fabricmc.fabric.api.client.command.v1.ClientCommandManager.literal;
+//#endif
 
 /** Dream Displays Beam, client side: casting, showing other players' casts, the cast dialog and commands. */
 public final class DdBeamClient implements ClientModInitializer {
@@ -40,8 +57,15 @@ public final class DdBeamClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         BeamConfig.load();
-        KeyMapping.Category category = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("ddbeam", "main"));
+        //#if MC >= 26.1
+        KeyMapping.Category category = KeyMapping.Category.register(dev.xcrafttm.ddbeam.Ids.beam("main"));
         openKey = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.ddbeam.menu", InputConstants.KEY_B, category));
+        //#elif MC >= 1.21.11
+        KeyMapping.Category category = KeyMapping.Category.register(dev.xcrafttm.ddbeam.Ids.beam("main"));
+        openKey = KeyBindingHelper.registerKeyBinding(new KeyMapping("key.ddbeam.menu", InputConstants.KEY_B, category));
+        //#else
+        openKey = KeyBindingHelper.registerKeyBinding(new KeyMapping("key.ddbeam.menu", InputConstants.KEY_B, "key.categories.ddbeam"));
+        //#endif
 
         receive(BeamPayloads.FRAME, data -> Casts.onFrame(BeamPayloads.Frame.decode(data)));
         receive(BeamPayloads.STREAM, data -> Casts.onStream(BeamPayloads.Stream.decode(data)));
@@ -57,7 +81,11 @@ public final class DdBeamClient implements ClientModInitializer {
             while (openKey.consumeClick()) openDialog(mc);
             Casts.tick(mc);
         });
+        //#if MC >= 1.19
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> dispatcher.register(commands()));
+        //#else
+        ClientCommandManager.DISPATCHER.register(commands());
+        //#endif
         // the cameras take FFmpeg a moment to list: ask early
         Sources.refresh();
     }
@@ -76,23 +104,23 @@ public final class DdBeamClient implements ClientModInitializer {
         if (mc.player == null) return false;
         Targets.Target target = Targets.lookedAt(64);
         if (target == null) {
-            Casts.message(Component.translatable("ddbeam.error.no_display"));
+            Casts.message(Texts.tr("ddbeam.error.no_display"));
             return false;
         }
-        mc.setScreenAndShow(new BeamScreen(null, target));
+        Mc.show(new BeamScreen(null, target));
         return true;
     }
 
     private static int feedback(CommandContext<FabricClientCommandSource> ctx, Component text) {
-        ctx.getSource().sendFeedback(Component.translatable("ddbeam.prefix").append(text));
+        ctx.getSource().sendFeedback(Texts.tr("ddbeam.prefix").append(text));
         return 1;
     }
 
     /** Casts the source onto the display the player looks at. */
     private static int startOn(CommandContext<FabricClientCommandSource> ctx, CaptureSource source) {
-        if (source == null) return feedback(ctx, Component.translatable("ddbeam.error.no_source"));
+        if (source == null) return feedback(ctx, Texts.tr("ddbeam.error.no_source"));
         Targets.Target target = Targets.lookedAt(64);
-        if (target == null) return feedback(ctx, Component.translatable("ddbeam.error.no_display"));
+        if (target == null) return feedback(ctx, Texts.tr("ddbeam.error.no_display"));
         BeamConfig config = BeamConfig.get();
         boolean audio = source.kind() == CaptureSource.Kind.CAMERA ? !"none".equalsIgnoreCase(config.cameraAudio) : config.systemAudio;
         Casts.start(target, new LocalCast.Settings(source, config.maxWidth, config.maxHeight, config.fps,
@@ -111,19 +139,19 @@ public final class DdBeamClient implements ClientModInitializer {
                     return 1;
                 }))
                 .then(literal("stop").executes(ctx -> {
-                    if (Casts.local() == null) return feedback(ctx, Component.translatable("ddbeam.cast.none"));
+                    if (Casts.local() == null) return feedback(ctx, Texts.tr("ddbeam.cast.none"));
                     Casts.stop();
                     return 1;
                 }))
                 .then(literal("sources").executes(ctx -> {
                     int i = 0;
-                    for (CaptureSource s : Sources.monitors()) feedback(ctx, Component.translatable("ddbeam.command.source.monitor", ++i, s.label()));
+                    for (CaptureSource s : Sources.monitors()) feedback(ctx, Texts.tr("ddbeam.command.source.monitor", ++i, s.label()));
                     List<CaptureSource> cams = Sources.cameras();
                     i = 0;
-                    if (cams != null) for (CaptureSource s : cams) feedback(ctx, Component.translatable("ddbeam.command.source.camera", ++i, s.label()));
+                    if (cams != null) for (CaptureSource s : cams) feedback(ctx, Texts.tr("ddbeam.command.source.camera", ++i, s.label()));
                     i = 0;
-                    for (CaptureSource s : Sources.windows()) feedback(ctx, Component.translatable("ddbeam.command.source.window", ++i, s.label()));
-                    for (Sources.AudioDevice d : Sources.audioDevices()) feedback(ctx, Component.translatable("ddbeam.command.source.audio", d.name()));
+                    for (CaptureSource s : Sources.windows()) feedback(ctx, Texts.tr("ddbeam.command.source.window", ++i, s.label()));
+                    for (Sources.AudioDevice d : Sources.audioDevices()) feedback(ctx, Texts.tr("ddbeam.command.source.audio", d.name()));
                     return 1;
                 }))
                 .then(literal("start")
@@ -139,22 +167,22 @@ public final class DdBeamClient implements ClientModInitializer {
                 .then(literal("reload").executes(ctx -> {
                     BeamConfig.load();
                     Sources.refresh();
-                    return feedback(ctx, Component.translatable("ddbeam.command.reloaded"));
+                    return feedback(ctx, Texts.tr("ddbeam.command.reloaded"));
                 }))
                 .then(literal("status").executes(ctx -> {
                     LocalCast cast = Casts.local();
                     if (cast == null) {
-                        feedback(ctx, Component.translatable("ddbeam.cast.none"));
+                        feedback(ctx, Texts.tr("ddbeam.cast.none"));
                     } else {
-                        feedback(ctx, Component.translatable("ddbeam.command.status.local", cast.source.label(), cast.width, cast.height,
+                        feedback(ctx, Texts.tr("ddbeam.command.status.local", cast.source.label(), cast.width, cast.height,
                                 cast.settings.fps(), cast.frames(), (cast.sharedWithOthers()
-                                        ? Component.translatable("ddbeam.command.status.shared", cast.streamKind().toUpperCase(java.util.Locale.ROOT))
-                                        : Component.translatable("ddbeam.command.status.private")),
+                                        ? Texts.tr("ddbeam.command.status.shared", cast.streamKind().toUpperCase(java.util.Locale.ROOT))
+                                        : Texts.tr("ddbeam.command.status.private")),
                                 cast.audioKind().isEmpty() ? "-" : cast.audioKind()));
                     }
                     for (Map.Entry<UUID, CastFeed> e : Casts.feeds().entrySet()) {
                         CastFeed feed = e.getValue();
-                        feedback(ctx, Component.translatable("ddbeam.command.status.feed", e.getKey().toString().substring(0, 8),
+                        feedback(ctx, Texts.tr("ddbeam.command.status.feed", e.getKey().toString().substring(0, 8),
                                 feed.caster == null ? "-" : nameOf(feed.caster), feed.stats(), Casts.audioStats(e.getKey())));
                     }
                     return 1;
@@ -164,6 +192,11 @@ public final class DdBeamClient implements ClientModInitializer {
     private static String nameOf(UUID player) {
         var connection = Minecraft.getInstance().getConnection();
         var info = connection == null ? null : connection.getPlayerInfo(player);
-        return info == null ? player.toString().substring(0, 8) : info.getProfile().name();
+        if (info == null) return player.toString().substring(0, 8);
+        //#if MC >= 1.21.11
+        return info.getProfile().name();
+        //#else
+        return info.getProfile().getName();
+        //#endif
     }
 }

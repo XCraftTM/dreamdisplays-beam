@@ -1,12 +1,11 @@
 package dev.xcrafttm.ddbeam.client.ui;
 
-import com.mojang.blaze3d.platform.NativeImage;
 import dev.xcrafttm.ddbeam.DdBeam;
 import dev.xcrafttm.ddbeam.client.capture.CaptureSource;
 import dev.xcrafttm.ddbeam.client.capture.Ffmpeg;
 import net.minecraft.client.Minecraft;
+import dev.xcrafttm.ddbeam.client.cast.Textures;
 import net.minecraft.client.renderer.texture.DynamicTexture;
-import net.minecraft.resources.Identifier;
 import org.lwjgl.stb.STBImage;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
@@ -35,7 +34,8 @@ final class Thumbnails {
         thread.setDaemon(true);
         return thread;
     });
-    private static final Map<String, Identifier> TEXTURES = new HashMap<>();
+    /** Resource ids of the textures (Identifier or ResourceLocation, by Minecraft version). */
+    private static final Map<String, Object> TEXTURES = new HashMap<>();
     private static final Map<String, Long> REQUESTED = new HashMap<>();
     private static int generation;
 
@@ -43,7 +43,7 @@ final class Thumbnails {
     }
 
     /** The newest picture of this source, or null; asks for a new one when the last is older than {@code maxAgeMs}. */
-    static Identifier get(CaptureSource source, long maxAgeMs) {
+    static Object get(CaptureSource source, long maxAgeMs) {
         String key = source.key();
         Long at = REQUESTED.get(key);
         long now = System.currentTimeMillis();
@@ -94,12 +94,11 @@ final class Thumbnails {
 
     private static void upload(String key, ByteBuffer pixels, int w, int h) {
         try {
-            NativeImage image = new NativeImage(w, h, false);
-            MemoryUtil.memCopy(MemoryUtil.memAddress(pixels), image.getPointer(), (long) w * h * 4);
-            Identifier id = Identifier.fromNamespaceAndPath("ddbeam", "thumbnail/" + (++generation));
-            Minecraft.getInstance().getTextureManager().register(id, new DynamicTexture(() -> "ddbeam thumbnail", image));
-            Identifier old = TEXTURES.put(key, id);
-            if (old != null) Minecraft.getInstance().getTextureManager().release(old);
+            DynamicTexture texture = Textures.create(w, h);
+            Textures.write(texture, pixels, w, h);
+            Object id = Textures.register("thumbnail/" + (++generation), texture);
+            Object old = TEXTURES.put(key, id);
+            if (old != null) Textures.release(old);
         } finally {
             STBImage.stbi_image_free(pixels);
         }

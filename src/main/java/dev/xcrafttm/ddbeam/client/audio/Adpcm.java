@@ -39,8 +39,8 @@ public final class Adpcm {
             step >>= 1;
             if (diff >= step) { code |= 1; delta += step; }
             predictor += (code & 8) != 0 ? -delta : delta;
-            predictor = Math.clamp(predictor, -32768, 32767);
-            index = Math.clamp(index + INDEX[code], 0, 88);
+            predictor = Math.max(-32768, Math.min(32767, predictor));
+            index = Math.max(0, Math.min(88, index + INDEX[code]));
             if ((i & 1) == 0) out[4 + i / 2] = (byte) code;
             else out[4 + i / 2] |= (byte) (code << 4);
         }
@@ -62,8 +62,8 @@ public final class Adpcm {
             if ((code & 2) != 0) delta += step >> 1;
             if ((code & 1) != 0) delta += step >> 2;
             predictor += (code & 8) != 0 ? -delta : delta;
-            predictor = Math.clamp(predictor, -32768, 32767);
-            index = Math.clamp(index + INDEX[code], 0, 88);
+            predictor = Math.max(-32768, Math.min(32767, predictor));
+            index = Math.max(0, Math.min(88, index + INDEX[code]));
             out[i] = (short) predictor;
         }
         return out;

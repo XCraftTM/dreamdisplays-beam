@@ -1,7 +1,6 @@
 {
   "key.category.ddbeam.main": "Dream Displays Beam",
   "key.ddbeam.menu": "Auf das angeschaute Display übertragen",
-
   "ddbeam.prefix": "[Beam] ",
   "ddbeam.source.monitor": "Bildschirm %s (%s × %s)",
   "ddbeam.source.monitor.plain": "Bildschirm %s",
@@ -9,17 +8,14 @@
   "ddbeam.source.portal.window": "Fenster (Auswahl im Dialog deines Desktops)",
   "ddbeam.source.window": "Fenster: %s",
   "ddbeam.source.test": "Testbild",
-
   "ddbeam.cast.started": "Übertrage %s mit %s × %s, %s FPS. Beenden mit /ddbeam stop oder im Menü des Displays.",
   "ddbeam.cast.stopped": "Übertragung beendet.",
   "ddbeam.cast.none": "Du überträgst gerade nichts.",
-
   "ddbeam.notice.shared": "Spieler in der Nähe des Displays sehen deine Übertragung.",
   "ddbeam.notice.relay_off": "Dieser Server gibt Übertragungen nicht weiter: nur du siehst sie.",
   "ddbeam.notice.unknown_display": "Der Server kennt dieses Display nicht: nur du siehst die Übertragung.",
   "ddbeam.notice.not_allowed": "Nur der Besitzer des Displays darf für die anderen darauf übertragen: nur du siehst deine Übertragung.",
   "ddbeam.notice.busy": "Jemand anderes überträgt schon auf dieses Display: nur du siehst deine Übertragung.",
-
   "ddbeam.error.no_display": "Schau zuerst auf ein Dream-Displays-Display.",
   "ddbeam.error.no_source": "Diese Quelle gibt es nicht. /ddbeam sources listet sie auf.",
   "ddbeam.error.start": "Die Übertragung konnte nicht starten: %s",
@@ -29,7 +25,6 @@
   "ddbeam.error.portal.gi": "Übertragen unter Wayland braucht python3 mit PyGObject (Paket python3-gi oder python-gobject).",
   "ddbeam.error.portal.gstreamer": "Übertragen unter Wayland braucht GStreamer mit PipeWire-Plugin (Pakete gstreamer1.0-pipewire und gstreamer1.0-plugins-good, oder gst-plugin-pipewire).",
   "ddbeam.error.portal.failed": "Dein Desktop hat die Bildschirmübertragung abgelehnt (xdg-desktop-portal). Ist ein Portal für deinen Desktop installiert?",
-
   "ddbeam.dialog.title": "Auf Display übertragen",
   "ddbeam.dialog.display": "%s × %s Blöcke",
   "ddbeam.dialog.tab.screens": "Bildschirme",
@@ -58,11 +53,9 @@
   "ddbeam.dialog.no_sources": "Hier gibt es nichts zu übertragen.",
   "ddbeam.dialog.portal": "Dein Desktop fragt nach",
   "ddbeam.dialog.preview": "Lade Vorschau…",
-
   "ddbeam.menu.cast": "Übertragen",
   "ddbeam.menu.cast.live": "Du überträgst hier",
   "ddbeam.menu.cast.body": "Zeige einen Bildschirm, eine Anwendung oder eine Kamera auf diesem Display und sende sie an die Spieler in der Nähe.",
-
   "ddbeam.command.source.monitor": "Bildschirm %1$s: %2$s  (/ddbeam start monitor %1$s)",
   "ddbeam.command.source.camera": "Kamera %1$s: %2$s  (/ddbeam start camera %1$s)",
   "ddbeam.command.source.window": "Fenster %1$s: %2$s  (/ddbeam start window %1$s)",
@@ -71,5 +64,19 @@
   "ddbeam.command.status.local": "Übertrage %s mit %s × %s, %s FPS: %s Bilder, %s, Ton: %s",
   "ddbeam.command.status.shared": "an die anderen gesendet (%s)",
   "ddbeam.command.status.private": "nur für dich",
-  "ddbeam.command.status.feed": "Display %s: von %s, Bilder empfangen / dekodiert / gezeigt %s, Ton %s"
+  "ddbeam.command.status.feed": "Display %s: von %s, Bilder empfangen / dekodiert / gezeigt %s, Ton %s",
+  "key.categories.ddbeam": "Dream Displays Beam",
+  "ddbeam.dialog.share.tip": "Spieler in der Nähe des Displays sehen und hören deine Übertragung.",
+  "ddbeam.dialog.share.off.title": "Senden an Spieler ist hier nicht möglich",
+  "ddbeam.dialog.share.off.body": "Dieser Server hat kein Dream Displays Beam (die Mod auf Fabric oder das Plugin auf Paper). Übertragen geht trotzdem; nur du siehst es.",
+  "ddbeam.dialog.audio.tip": "Wähle zuerst eine Quelle.",
+  "ddbeam.dialog.audio.screen.tip": "Was dein Computer abspielt, geht an die anderen Spieler (du hörst es ja schon). Unter Windows ohne den Ton des Spiels selbst.",
+  "ddbeam.dialog.audio.window.tip": "Nur der Ton dieser Anwendung geht an die anderen Spieler (du hörst ihn ja schon).",
+  "ddbeam.dialog.audio.camera.tip": "Der Toneingang der Kamera, für alle vom Display aus zu hören, auch für dich.",
+  "ddbeam.dialog.camera_mode": "Kameramodus",
+  "ddbeam.dialog.camera_mode.auto": "Standard der Kamera",
+  "ddbeam.dialog.camera_mode.loading": "Lese Modi…",
+  "ddbeam.dialog.camera_mode.value": "%s × %s · %s FPS · %s",
+  "ddbeam.dialog.camera_mode.value.nofps": "%s × %s · %s",
+  "ddbeam.dialog.camera_mode.tip": "Was die Kamera selbst sendet. Manche Kameras schaffen ihre volle Größe und Bildrate nur als MJPEG. Gilt ab dem nächsten Live gehen / Wechseln."
 }

@@ -1,7 +1,6 @@
 {
   "key.category.ddbeam.main": "Dream Displays Beam",
   "key.ddbeam.menu": "Cast onto the display you look at",
-
   "ddbeam.prefix": "[Beam] ",
   "ddbeam.source.monitor": "Screen %s (%s × %s)",
   "ddbeam.source.monitor.plain": "Screen %s",
@@ -9,17 +8,14 @@
   "ddbeam.source.portal.window": "Window (choose it in your desktop's dialog)",
   "ddbeam.source.window": "Window: %s",
   "ddbeam.source.test": "Test pattern",
-
   "ddbeam.cast.started": "Casting %s at %s × %s, %s FPS. Stop it with /ddbeam stop or from the display's menu.",
   "ddbeam.cast.stopped": "Cast stopped.",
   "ddbeam.cast.none": "You are not casting.",
-
   "ddbeam.notice.shared": "Players near the display see your cast.",
   "ddbeam.notice.relay_off": "This server does not pass casts on: only you see it.",
   "ddbeam.notice.unknown_display": "The server does not know this display: only you see the cast.",
   "ddbeam.notice.not_allowed": "Only the display's owner may cast onto it for the others: only you see your cast.",
   "ddbeam.notice.busy": "Someone else is casting onto this display: only you see your cast.",
-
   "ddbeam.error.no_display": "Look at a Dream Displays display first.",
   "ddbeam.error.no_source": "There is no such source. /ddbeam sources lists them.",
   "ddbeam.error.start": "The cast could not start: %s",
@@ -29,7 +25,6 @@
   "ddbeam.error.portal.gi": "Casting on Wayland needs python3 with PyGObject (package python3-gi or python-gobject).",
   "ddbeam.error.portal.gstreamer": "Casting on Wayland needs GStreamer with its PipeWire plugin (packages gstreamer1.0-pipewire and gstreamer1.0-plugins-good, or gst-plugin-pipewire).",
   "ddbeam.error.portal.failed": "Your desktop refused the screen cast (xdg-desktop-portal). Is a portal for your desktop installed?",
-
   "ddbeam.dialog.title": "Cast to display",
   "ddbeam.dialog.display": "%s × %s blocks",
   "ddbeam.dialog.tab.screens": "Screens",
@@ -58,11 +53,9 @@
   "ddbeam.dialog.no_sources": "Nothing to cast here.",
   "ddbeam.dialog.portal": "Your desktop asks which one",
   "ddbeam.dialog.preview": "Loading preview…",
-
   "ddbeam.menu.cast": "Cast",
   "ddbeam.menu.cast.live": "Casting here",
   "ddbeam.menu.cast.body": "Show a screen, an application or a camera on this display, and stream it to the players near it.",
-
   "ddbeam.command.source.monitor": "Screen %1$s: %2$s  (/ddbeam start monitor %1$s)",
   "ddbeam.command.source.camera": "Camera %1$s: %2$s  (/ddbeam start camera %1$s)",
   "ddbeam.command.source.window": "Window %1$s: %2$s  (/ddbeam start window %1$s)",
@@ -71,5 +64,19 @@
   "ddbeam.command.status.local": "Casting %s at %s × %s, %s FPS: %s frames, %s, audio: %s",
   "ddbeam.command.status.shared": "streamed to the others (%s)",
   "ddbeam.command.status.private": "only for you",
-  "ddbeam.command.status.feed": "Display %s: caster %s, frames received / decoded / shown %s, audio %s"
+  "ddbeam.command.status.feed": "Display %s: caster %s, frames received / decoded / shown %s, audio %s",
+  "key.categories.ddbeam": "Dream Displays Beam",
+  "ddbeam.dialog.share.tip": "Players near the display see and hear your cast.",
+  "ddbeam.dialog.share.off.title": "Streaming to players is not available here",
+  "ddbeam.dialog.share.off.body": "This server has no Dream Displays Beam (the mod on Fabric or the plugin on Paper). You can still cast; only you see it.",
+  "ddbeam.dialog.audio.tip": "Choose a source first.",
+  "ddbeam.dialog.audio.screen.tip": "What your computer plays goes to the other players (you already hear it). The game's own sound is left out on Windows.",
+  "ddbeam.dialog.audio.window.tip": "Only this application's sound goes to the other players (you already hear it).",
+  "ddbeam.dialog.audio.camera.tip": "The camera's own audio input, played from the display for everyone, you included.",
+  "ddbeam.dialog.camera_mode": "Camera mode",
+  "ddbeam.dialog.camera_mode.auto": "Camera default",
+  "ddbeam.dialog.camera_mode.loading": "Reading modes…",
+  "ddbeam.dialog.camera_mode.value": "%s × %s · %s FPS · %s",
+  "ddbeam.dialog.camera_mode.value.nofps": "%s × %s · %s",
+  "ddbeam.dialog.camera_mode.tip": "What the camera itself sends. Some cameras reach their full size and frame rate only as MJPEG. Applies from the next Go Live / Switch."
 }

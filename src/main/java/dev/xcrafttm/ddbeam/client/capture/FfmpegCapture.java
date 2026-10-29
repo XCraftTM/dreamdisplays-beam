@@ -90,7 +90,7 @@ public final class FfmpegCapture implements AutoCloseable {
 
     /** Starts FFmpeg and its reader threads; blocks while FFmpeg is located (do not call it on the render thread). */
     public void start() throws IOException {
-        int quality = Math.clamp(BeamConfig.get().quality, 2, 31);
+        int quality = Math.max(2, Math.min(31, BeamConfig.get().quality));
         List<String> command = new ArrayList<>();
         if (source.portal()) {
             // Wayland: the desktop portal + PipeWire, through the helper (same multipart JPEG output)

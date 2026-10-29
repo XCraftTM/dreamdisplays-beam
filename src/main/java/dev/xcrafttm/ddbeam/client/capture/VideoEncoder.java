@@ -94,7 +94,7 @@ public final class VideoEncoder {
     public static int bitrateKbps(int width, int height, int fps) {
         int configured = BeamConfig.get().streamBitrateKbps;
         if (configured > 0) return configured;
-        return (int) Math.clamp((long) width * height * fps * 0.055 / 1000, 2500, 25_000);
+        return (int) Math.max(2500, Math.min(25_000, (long) width * height * fps * 0.055 / 1000));
     }
 
     /**

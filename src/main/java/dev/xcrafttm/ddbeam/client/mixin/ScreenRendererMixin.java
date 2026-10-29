@@ -10,7 +10,6 @@ import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import dev.xcrafttm.ddbeam.client.cast.Casts;
-import net.minecraft.client.renderer.rendertype.RenderType;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
@@ -42,23 +41,30 @@ public abstract class ScreenRendererMixin {
 
     @Inject(method = "renderScreenTexture", at = @At("HEAD"), cancellable = true, require = 0)
     private void ddbeam$drawCast(DisplayScreen screen, PoseStack stack, boolean replay,
-                                 Function2<RenderType, Function2<PoseStack.Pose, VertexConsumer, Unit>, Unit> drawQuad,
+                                 @SuppressWarnings("rawtypes") Function2 drawQuad,
                                  CallbackInfo ci) {
-        RenderType type = Casts.renderTypeFor(screen.getUuid());
+        var type = Casts.renderTypeFor(screen.getUuid());
         if (type == null) return;
         // the display's own video keeps going underneath (and its uploads with it)
         if (!replay) screen.fitTexture();
         int turns = screen.getRotation().getQuarterTurns() & 3;
-        int c = (int) (Math.clamp(screen.getBrightness(), 0f, 1f) * 255f);
+        int c = (int) (Math.max(0f, Math.min(1f, screen.getBrightness())) * 255f);
         stack.pushPose();
         if (replay) DisplayPoseStack.INSTANCE.liftTowardViewer(stack, screen.getFacing(), REPLAY_LIFT);
         DisplayPoseStack.INSTANCE.applyScreenTransform(stack, screen.getFacing(), screen.getWidth(), screen.getHeight());
-        drawQuad.invoke(type, (pose, buffer) -> {
+        //noinspection unchecked
+        drawQuad.invoke(type, (Function2<PoseStack.Pose, VertexConsumer, Unit>) (pose, buffer) -> {
             float[][] corners = {{0f, 0f}, {1f, 0f}, {1f, 1f}, {0f, 1f}};
             for (int i = 0; i < 4; i++) {
+                //#if MC >= 1.21
                 buffer.addVertex(pose, corners[i][0], corners[i][1], 0f)
                         .setUv(BASE_U[(i + turns) & 3], BASE_V[(i + turns) & 3])
                         .setColor(c, c, c, 255);
+                //#else
+                buffer.vertex(pose.pose(), corners[i][0], corners[i][1], 0f)
+                        .uv(BASE_U[(i + turns) & 3], BASE_V[(i + turns) & 3])
+                        .color(c, c, c, 255).endVertex();
+                //#endif
             }
             return Unit.INSTANCE;
         });

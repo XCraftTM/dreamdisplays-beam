@@ -1,13 +1,14 @@
 package dev.xcrafttm.ddbeam.client.cast;
 
 import com.dreamdisplays.platform.client.render.DisplayUnlitRenderTypes;
-import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.renderpearl.api.textures.FilterMode;
 import dev.xcrafttm.ddbeam.DdBeam;
 import net.minecraft.client.Minecraft;
+//#if MC >= 1.21.11
 import net.minecraft.client.renderer.rendertype.RenderType;
+//#else
+import net.minecraft.client.renderer.RenderType;
+//#endif
 import net.minecraft.client.renderer.texture.DynamicTexture;
-import net.minecraft.resources.Identifier;
 
 import org.lwjgl.system.MemoryUtil;
 
@@ -49,7 +50,7 @@ public final class CastFeed {
 
     // render thread only
     private DynamicTexture texture;
-    private Identifier textureId;
+    private Object textureId;
     private RenderType renderType;
     private int width, height;
 
@@ -140,17 +141,18 @@ public final class CastFeed {
             releaseTexture();
             width = frame.width();
             height = frame.height();
-            texture = new CastTexture(width, height);
-            textureId = Identifier.fromNamespaceAndPath("ddbeam", "cast/" + display + "/" + (++generation));
-            Minecraft.getInstance().getTextureManager().register(textureId, texture);
-            renderType = DisplayUnlitRenderTypes.INSTANCE.create("ddbeam_cast", textureId);
+            texture = Textures.create(width, height);
+            var id = dev.xcrafttm.ddbeam.Ids.beam("cast/" + display + "/" + (++generation));
+            Minecraft.getInstance().getTextureManager().register(id, texture);
+            textureId = id;
+            renderType = DisplayUnlitRenderTypes.INSTANCE.create("ddbeam_cast", id);
         }
-        RenderSystem.getDevice().createCommandEncoder().writeToTexture(texture.getTexture(), frame.pixels(), 0, 0, 0, 0, width, height);
+        Textures.write(texture, frame.pixels(), width, height);
         shown++;
     }
 
     private void releaseTexture() {
-        if (textureId != null) Minecraft.getInstance().getTextureManager().release(textureId);
+        if (textureId != null) Textures.release(textureId);
         texture = null;
         textureId = null;
         renderType = null;
@@ -182,14 +184,6 @@ public final class CastFeed {
         JpegDecoder.Decoded left = ready.getAndSet(null);
         if (left != null) left.free();
         releaseTexture();
-    }
-
-    /** The texture of a feed: filtered linearly, like Dream Displays' own video textures. */
-    private static final class CastTexture extends DynamicTexture {
-        CastTexture(int width, int height) {
-            super(() -> "ddbeam cast", width, height, false);
-            sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
-        }
     }
 
     /** Puts a JPEG frame together from its parts; a frame with a part missing is dropped. */

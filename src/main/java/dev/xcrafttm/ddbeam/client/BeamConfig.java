@@ -43,6 +43,8 @@ public final class BeamConfig {
     public String windowsGrabber = "gdigrab";
     /** Camera picture size to ask for, e.g. "1280x720"; empty: the camera's default. */
     public String cameraSize = "";
+    /** The mode picked in the cast dialog per camera (by device name), see CameraModes; none: the camera's default. */
+    public java.util.Map<String, String> cameraModes = new java.util.HashMap<>();
 
     /**
      * Stream what the computer plays along with a screen or window cast (you do not hear it twice: only the

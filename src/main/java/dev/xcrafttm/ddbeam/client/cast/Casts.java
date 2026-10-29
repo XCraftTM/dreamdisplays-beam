@@ -1,11 +1,16 @@
 package dev.xcrafttm.ddbeam.client.cast;
 
+import dev.xcrafttm.ddbeam.Texts;
 import dev.xcrafttm.ddbeam.client.BeamConfig;
 import dev.xcrafttm.ddbeam.client.audio.Adpcm;
 import dev.xcrafttm.ddbeam.client.audio.AudioPlayer;
 import dev.xcrafttm.ddbeam.net.BeamPayloads;
 import net.minecraft.client.Minecraft;
+//#if MC >= 1.21.11
 import net.minecraft.client.renderer.rendertype.RenderType;
+//#else
+import net.minecraft.client.renderer.RenderType;
+//#endif
 import net.minecraft.network.chat.Component;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.phys.Vec3;
@@ -36,8 +41,7 @@ public final class Casts {
     }
 
     public static void message(Component text) {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.player != null) mc.player.sendSystemMessage(Component.translatable("ddbeam.prefix").append(text));
+        dev.xcrafttm.ddbeam.client.Mc.chat(Texts.tr("ddbeam.prefix").append(text));
     }
 
     // ---- for the renderer (render thread) ----
@@ -69,7 +73,7 @@ public final class Casts {
         local = cast;
         FEEDS.put(cast.display, cast.feed);
         cast.start();
-        message(Component.translatable("ddbeam.cast.started", settings.source().label(), cast.width, cast.height, settings.fps()));
+        message(Texts.tr("ddbeam.cast.started", settings.source().label(), cast.width, cast.height, settings.fps()));
     }
 
     public static void stop() {
@@ -78,7 +82,7 @@ public final class Casts {
         local = null;
         FEEDS.remove(cast.display, cast.feed);
         cast.stop();
-        message(Component.translatable("ddbeam.cast.stopped"));
+        message(Texts.tr("ddbeam.cast.stopped"));
     }
 
     // ---- from the server (client thread) ----
@@ -171,6 +175,10 @@ public final class Casts {
 
         BeamConfig config = BeamConfig.get();
         float gain = config.volume * mc.options.getSoundSourceVolume(SoundSource.RECORDS);
+        //#if MC >= 1.21.11
+        // the master volume is part of each sound's own volume here (before, the game set it as the listener's gain)
+        gain *= mc.options.getSoundSourceVolume(SoundSource.MASTER);
+        //#endif
         for (Map.Entry<UUID, AudioPlayer> e : REMOTE_AUDIO.entrySet()) {
             Vec3 at = centerOf(e.getKey());
             if (at != null) e.getValue().pump(at, gain, config.audioRange);
