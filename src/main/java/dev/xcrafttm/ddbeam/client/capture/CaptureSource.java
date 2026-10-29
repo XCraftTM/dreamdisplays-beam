@@ -48,6 +48,14 @@ public record CaptureSource(Kind kind, int index, String name, int x, int y, int
         return new CaptureSource(Kind.TEST, 0, "", 0, 0, 1280, 720);
     }
 
+    /**
+     * Whether the test pattern is offered (a tile in the cast dialog, {@code /ddbeam start test}): only in the
+     * development environment (Beam's test clients) or with {@code -Dddbeam.testPattern=true}.
+     */
+    public static boolean testOffered() {
+        return net.fabricmc.loader.api.FabricLoader.getInstance().isDevelopmentEnvironment() || Boolean.getBoolean("ddbeam.testPattern");
+    }
+
     /** A window by title: the open window with that title (or one containing it), else just the title. */
     public static CaptureSource window(String title) {
         CaptureSource contains = null;

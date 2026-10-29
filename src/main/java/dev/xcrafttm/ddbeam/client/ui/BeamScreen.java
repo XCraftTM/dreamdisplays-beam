@@ -160,7 +160,7 @@ public final class BeamScreen extends Screen {
         share = config.share;
         audio = config.systemAudio;
         monitors = new ArrayList<>(Sources.monitors());
-        monitors.add(CaptureSource.test());
+        if (CaptureSource.testOffered()) monitors.add(CaptureSource.test());
         windows = Sources.windows();
         cameras = Sources.cameras();
         Sources.refresh().thenAccept(found -> Minecraft.getInstance().execute(() -> cameras = found));

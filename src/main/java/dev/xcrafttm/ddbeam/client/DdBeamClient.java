@@ -163,7 +163,8 @@ public final class DdBeamClient implements ClientModInitializer {
                                 startOn(ctx, pick(Sources.windows(), IntegerArgumentType.getInteger(ctx, "number"))))))
                         .then(literal("title").then(argument("title", StringArgumentType.greedyString()).executes(ctx ->
                                 startOn(ctx, CaptureSource.window(StringArgumentType.getString(ctx, "title"))))))
-                        .then(literal("test").executes(ctx -> startOn(ctx, CaptureSource.test()))))
+                        .then(literal("test").requires(source -> CaptureSource.testOffered())
+                                .executes(ctx -> startOn(ctx, CaptureSource.test()))))
                 .then(literal("reload").executes(ctx -> {
                     BeamConfig.load();
                     Sources.refresh();

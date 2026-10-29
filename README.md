@@ -76,7 +76,9 @@ Notes on what was tested: everything on Windows 11. **Linux and macOS are implem
 ## Commands
 
 `/ddbeam menu`, `/ddbeam stop`, `/ddbeam status`, `/ddbeam sources`, `/ddbeam reload`,
-`/ddbeam start monitor|camera|window <n>`, `/ddbeam start title <window title>`, `/ddbeam start test`.
+`/ddbeam start monitor|camera|window <n>`, `/ddbeam start title <window title>`.
+The test pattern (a tile in the dialog and `/ddbeam start test`) is only offered in the development environment
+or with `-Dddbeam.testPattern=true`.
 
 ## Settings
 
