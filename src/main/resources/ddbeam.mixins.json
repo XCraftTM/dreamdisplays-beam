@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "dev.xcrafttm.ddbeam.client.mixin",
+  "compatibilityLevel": "JAVA_${mixinJava}",
+  "client": [
+    "DisplayMenuMixin",
+    "ScreenRendererMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

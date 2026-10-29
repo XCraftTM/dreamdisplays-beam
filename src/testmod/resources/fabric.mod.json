@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "ddbeam_test",
+  "version": "0",
+  "name": "Dream Displays Beam test scene",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["dev.xcrafttm.ddbeam.test.TestScene"],
+    "client": ["dev.xcrafttm.ddbeam.test.TestDriver"]
+  },
+  "depends": { "ddbeam": "*" }
+}

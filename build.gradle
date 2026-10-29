@@ -1,0 +1,100 @@
+plugins {
+    // 26.x is not obfuscated; older versions would need 'fabric-loom' with Mojang's mappings (see Lumen)
+    id 'net.fabricmc.fabric-loom' version "${loom_version}"
+}
+
+// one source tree for every supported Minecraft version: ./gradlew build -Pminecraft_version=26.3
+apply from: 'preprocess.gradle'
+def mc = project.minecraft_version
+
+def versionFile = file("versions/${mc}.properties")
+if (!versionFile.exists()) throw new GradleException("Minecraft ${mc} is not supported (no ${versionFile.name})")
+def deps = new Properties()
+versionFile.withInputStream { deps.load(it) }
+def javaRelease = deps.java_version as int
+
+version = "${project.mod_version}+${mc}"
+group = project.maven_group
+base { archivesName = 'dreamdisplays-beam' }
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(25) }
+}
+
+repositories {
+    exclusiveContent {
+        forRepository { maven { name = 'Modrinth'; url = 'https://api.modrinth.com/maven' } }
+        filter { includeGroup 'maven.modrinth' }
+    }
+    mavenCentral()
+}
+
+// dev only: a test scene and a driver that takes screenshots
+sourceSets {
+    testmod {
+        compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output
+        runtimeClasspath += sourceSets.main.runtimeClasspath + sourceSets.main.output
+    }
+}
+
+ext.ppMinecraft = mc
+ext.ppLoader = 'fabric'
+preprocessSources(['src/main/java'], ['**/*.java'])
+preprocessSources(['src/testmod/java'], ['**/*.java'], [], 'testmod')
+
+dependencies {
+    minecraft "com.mojang:minecraft:${mc}"
+    implementation "net.fabricmc:fabric-loader:${loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${deps.fabric_api_version}"
+    implementation "maven.modrinth:dreamdisplays:${deps.dreamdisplays_version}"
+    compileOnly "maven.modrinth:iris:${deps.iris_version}"
+    if (project.shaders.toBoolean()) {
+        localRuntime "maven.modrinth:iris:${deps.iris_version}"
+        localRuntime "maven.modrinth:sodium:${deps.sodium_version}"
+    }
+}
+
+loom {
+    mods {
+        ddbeam { sourceSet sourceSets.main }
+        ddbeam_test { sourceSet sourceSets.testmod }
+    }
+    runs {
+        // the test scene: a room with a display, the cast started on it, screenshots (see README)
+        autotest {
+            client()
+            name = 'Beam auto test'
+            source sourceSets.testmod
+            runDir = "run/autotest/${mc}"
+            programArgs '--quickPlaySingleplayer', 'beam-test', '--width', '1280', '--height', '720', '--username', 'Caster'
+            vmArgs '-Xmx3G', '--enable-native-access=ALL-UNNAMED'
+            if (!project.hasProperty('testMode')) vmArg '-Dddbeam.test.mode=cast'
+            ['testPrefix': 'prefix', 'testMode': 'mode', 'testSource': 'source'].each { prop, key ->
+                if (project.hasProperty(prop)) vmArg "-Dddbeam.test.${key}=${project.property(prop)}"
+            }
+        }
+        // a second player for the streaming test: joins the caster's world opened to LAN (port 25700)
+        viewer {
+            client()
+            name = 'Beam viewer'
+            source sourceSets.testmod
+            runDir = "run/viewer/${mc}"
+            programArgs '--quickPlayMultiplayer', '127.0.0.1:25700', '--width', '1280', '--height', '720', '--username', 'Viewer'
+            vmArgs '-Xmx3G', '--enable-native-access=ALL-UNNAMED', '-Dddbeam.test.mode=viewer'
+            if (project.hasProperty('testPrefix')) vmArg "-Dddbeam.test.prefix=${project.property('testPrefix')}"
+        }
+    }
+}
+
+processResources {
+    def props = [version: project.version, minecraft: "~${mc}", java: javaRelease, mixinJava: Math.min(javaRelease, 21)]
+    inputs.properties props
+    filesMatching(['fabric.mod.json', 'ddbeam.mixins.json']) { expand props }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = javaRelease
+    it.options.encoding = 'UTF-8'
+}
+
+jar { archiveFileName = "dreamdisplays-beam-${project.mod_version}+${mc}.jar" }

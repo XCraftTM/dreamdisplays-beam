@@ -1,0 +1,196 @@
+// Taken from the Calagopus Minecraft Server Manager's helper mod (mod/preprocess.gradle).
+//
+// One source tree for every Minecraft version and loader (same idea as Stonecutter or the ReplayMod
+// preprocessor, but without a plugin: the loaders need different Gradle versions). Lines between
+//
+//     //#if MC >= 1.21.6 && !FORGE
+//     ...
+//     //#elif MC >= 1.20.5
+//     ...
+//     //#else
+//     ...
+//     //#endif
+//
+// are kept only where their condition holds for the build; the others become empty lines, so line
+// numbers in errors still match the source. Conditions compare MC with a version (==, !=, <, <=,
+// >, >=), name the loader (FABRIC, FORGE, NEOFORGE) and combine with &&, ||, ! and parentheses.
+//
+// A build applies this file, sets `ext.ppMinecraft` and `ext.ppLoader`, and calls
+// `preprocessSources(dirs, includes)`; its main Java sources then come from build/pp/java.
+
+static List<Integer> ppParseVersion(String v) {
+    def parts = v.trim().split('[.-]').collect { it.isInteger() ? (it as int) : 0 }
+    while (parts.size() < 3) parts << 0
+    return parts.take(3)
+}
+
+static int ppCompare(String a, String b) {
+    def x = ppParseVersion(a), y = ppParseVersion(b)
+    for (int i = 0; i < 3; i++) if (x[i] != y[i]) return x[i] <=> y[i]
+    return 0
+}
+
+/** Evaluates a condition (recursive descent over tokens). */
+static boolean ppEval(String condition, String mc, String loader) {
+    def tokens = (condition =~ /\s*(&&|\|\||!=|==|>=|<=|[()!<>]|[A-Za-z_]+|[0-9][0-9.]*)/).collect { it[1] }
+    int pos = 0
+    def peek = { -> pos < tokens.size() ? tokens[pos] : null }
+    def next = { -> tokens[pos++] }
+    def expr
+    def primary = { ->
+        def t = next()
+        if (t == '(') {
+            def v = expr()
+            if (next() != ')') throw new GradleException("preprocess: missing ) in '$condition'")
+            return v
+        }
+        if (t == '!') return !primary()
+        if (t == 'MC') {
+            def op = next(), version = next()
+            int c = ppCompare(mc, version)
+            switch (op) {
+                case '==': return c == 0
+                case '!=': return c != 0
+                case '<': return c < 0
+                case '<=': return c <= 0
+                case '>': return c > 0
+                case '>=': return c >= 0
+                default: throw new GradleException("preprocess: bad operator '$op' in '$condition'")
+            }
+        }
+        if (t in ['FABRIC', 'FORGE', 'NEOFORGE']) return t.toLowerCase() == loader
+        throw new GradleException("preprocess: unexpected '$t' in '$condition'")
+    }
+    def and = { ->
+        def v = primary()
+        while (peek() == '&&') { next(); def r = primary(); v = v && r }
+        return v
+    }
+    expr = { ->
+        def v = and()
+        while (peek() == '||') { next(); def r = and(); v = v || r }
+        return v
+    }
+    def result = expr()
+    if (pos != tokens.size()) throw new GradleException("preprocess: trailing '${tokens[pos]}' in '$condition'")
+    return result
+}
+
+static String ppProcess(String text, String mc, String loader, String name) {
+    // per nesting level: [this branch active, a branch of this if was taken, parent active]
+    def stack = []
+    boolean active = true
+    def out = new StringBuilder()
+    text.eachLine { line, n ->
+        def t = line.trim()
+        if (t.startsWith('//#if ')) {
+            boolean cond = active && ppEval(t.substring(6), mc, loader)
+            stack << [active, cond]
+            active = cond
+            out << '\n'
+        } else if (t.startsWith('//#elif ')) {
+            if (stack.isEmpty()) throw new GradleException("$name:${n + 1}: #elif without #if")
+            def (parent, taken) = stack[-1]
+            boolean cond = parent && !taken && ppEval(t.substring(8), mc, loader)
+            stack[-1] = [parent, taken || cond]
+            active = cond
+            out << '\n'
+        } else if (t == '//#else') {
+            if (stack.isEmpty()) throw new GradleException("$name:${n + 1}: #else without #if")
+            def (parent, taken) = stack[-1]
+            active = parent && !taken
+            stack[-1] = [parent, true]
+            out << '\n'
+        } else if (t == '//#endif') {
+            if (stack.isEmpty()) throw new GradleException("$name:${n + 1}: #endif without #if")
+            active = stack.remove(stack.size() - 1)[0]
+            out << '\n'
+        } else {
+            out << (active ? line : '') << '\n'
+        }
+    }
+    if (!stack.isEmpty()) throw new GradleException("$name: #if without #endif")
+    return out.toString()
+}
+
+/**
+ * Renames classes for builds whose game classes have other names than Mojang's (Forge 1.16.5 keeps
+ * MCP class names): qualified names (longest known prefix), then the simple names of imported classes.
+ */
+static String ppRename(String text, Map<String, String> renames) {
+    if (renames == null || renames.isEmpty()) return text
+    def simple = [:]
+    text = text.replaceAll(/net\.minecraft\.[\w.]+/) { String fq ->
+        def parts = fq.split('\\.')
+        for (int n = parts.length; n > 2; n--) {
+            def prefix = parts[0..<n].join('.')
+            def to = renames[prefix]
+            if (to != null) return to + (n < parts.length ? '.' + parts[n..-1].join('.') : '')
+        }
+        return fq
+    }
+    // simple names of imported classes
+    (text =~ /(?m)^import\s+([\w.]+)\s*;/).each { m ->
+        def to = m[1] as String
+        def from = renames.find { k, v -> v == to }?.key
+        if (from == null) return
+        def fromSimple = from.tokenize('.').last(), toSimple = to.tokenize('.').last()
+        // nested classes used through the imported one (Heightmap.Types → Heightmap.Type)
+        text = text.replaceAll(/(?<![\w.])${java.util.regex.Pattern.quote(fromSimple)}\.([A-Z]\w*)/) { all, String inner ->
+            def nested = renames[from + '.' + inner]
+            return nested != null ? toSimple + '.' + nested.tokenize('.').last() : all
+        }
+        simple[fromSimple] = toSimple
+    }
+    simple.each { from, to ->
+        if (from != to) text = text.replaceAll(/(?<![\w.])${java.util.regex.Pattern.quote(from)}(?!\w)/, to)
+    }
+    return text
+}
+
+ext.preprocessSources = { List<Object> dirs, List<String> includes, List<String> excludes = [], String sourceSetName = 'main' ->
+    def outDir = layout.buildDirectory.dir("pp/${sourceSetName}/java").get().asFile
+    def mc = project.ext.ppMinecraft as String
+    def loader = project.ext.ppLoader as String
+    def task = tasks.register(sourceSetName == 'main' ? 'preprocess' : "preprocess${sourceSetName.capitalize()}") {
+        inputs.property('mc', mc)
+        inputs.property('loader', loader)
+        inputs.property('includes', includes.join(','))
+        inputs.property('excludes', excludes.join(','))
+        inputs.property('renames', project.ext.has('ppClassRenames') ? (project.ext.ppClassRenames as Map).size() : 0)
+        dirs.each { d -> inputs.dir(d).optional() }
+        outputs.dir(outDir)
+        doLast {
+            project.delete(outDir)
+            dirs.each { d ->
+                def root = project.file(d)
+                if (!root.exists()) return
+                project.fileTree(root) { includes.each { include it }; excludes.each { exclude it } }.visit { f ->
+                    if (f.directory || !f.name.endsWith('.java')) return
+                    def target = new File(outDir, f.relativePath.pathString)
+                    target.parentFile.mkdirs()
+                    def renames = project.ext.has('ppClassRenames') ? project.ext.ppClassRenames as Map : null
+                    target.text = ppRename(ppProcess(f.file.getText('UTF-8'), mc, loader, f.relativePath.pathString), renames)
+                }
+            }
+        }
+    }
+    def sourceSet = sourceSets.getByName(sourceSetName)
+    sourceSet.java.srcDirs = [outDir]
+    tasks.named(sourceSet.compileJavaTaskName) { dependsOn task }
+    return task
+}
+
+// for build scripts: compares two versions (negative, 0, positive)
+ext.ppCompareVersions = { String a, String b -> ppCompare(a, b) }
+
+// pack.mcmeta for the mod's resources: the data pack format of the version (min/max since 1.21.9)
+ext.ppPackMeta = { String mc ->
+    def formats = [['1.21.7', 81], ['1.21.6', 80], ['1.21.5', 71], ['1.21.4', 61], ['1.21.2', 57], ['1.21', 48],
+                   ['1.20.5', 41], ['1.20.3', 26], ['1.20.2', 18], ['1.20', 15], ['1.19.4', 12], ['1.19', 10],
+                   ['1.18.2', 9], ['1.18', 8], ['1.17', 7], ['1.16.2', 6], ['1.16', 5]]
+    def pack = ppCompare(mc, '1.21.9') >= 0
+            ? '"min_format": 82, "max_format": 999'
+            : '"pack_format": ' + (formats.find { ppCompare(mc, it[0]) >= 0 }?.get(1) ?: 6)
+    return '{\n  "pack": {\n    "description": "Dream Displays Lumen",\n    ' + pack + '\n  }\n}\n'
+}

@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "ddbeam",
+  "version": "${version}",
+  "name": "Dream Displays Beam",
+  "description": "Cast your monitor or a camera onto Dream Displays screens, and stream it to the other players in the world.",
+  "authors": ["XCraftTM"],
+  "license": "All-Rights-Reserved",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["dev.xcrafttm.ddbeam.DdBeam"],
+    "client": ["dev.xcrafttm.ddbeam.client.DdBeamClient"]
+  },
+  "mixins": [{ "config": "ddbeam.mixins.json", "environment": "client" }],
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "minecraft": "${minecraft}",
+    "java": ">=${java}",
+    "fabric-api": "*",
+    "dreamdisplays": ">=1.10.6"
+  }
+}
