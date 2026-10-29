@@ -125,10 +125,15 @@ public final class TestScene implements ModInitializer {
             // nothing in the room in front of the walls (light tests look at the bare floor)
             run(server, "fill -9 -60 0 9 -52 19 minecraft:air");
             if ("light".equals(System.getProperty("ddbeam.test.mode"))) {
-                // two villagers in front of the picture's left and right part (Lumen lights entities too)
+                // two armor stands in armor in front of the picture's left and right part (Lumen lights entities
+                // and what they wear)
                 run(server, "kill @e[type=minecraft:villager]");
-                run(server, "summon minecraft:villager -2.5 -60 2.5 {NoAI:1b,Silent:1b,Rotation:[0f,0f]}");
-                run(server, "summon minecraft:villager 2.5 -60 2.5 {NoAI:1b,Silent:1b,Rotation:[0f,0f]}");
+                run(server, "kill @e[type=minecraft:armor_stand]");
+                run(server, "summon minecraft:armor_stand -2.5 -60 2.5 {Tags:[\"lumen\"],Rotation:[0f,0f]}");
+                run(server, "summon minecraft:armor_stand 2.5 -60 2.5 {Tags:[\"lumen\"],Rotation:[0f,0f]}");
+                run(server, "item replace entity @e[type=minecraft:armor_stand,tag=lumen] armor.head with minecraft:golden_helmet");
+                run(server, "item replace entity @e[type=minecraft:armor_stand,tag=lumen] armor.chest with minecraft:iron_chestplate");
+                run(server, "item replace entity @e[type=minecraft:armor_stand,tag=lumen] armor.legs with minecraft:golden_leggings");
             }
             for (ServerDisplay display : toList(DreamDisplaysServer.getDisplays())) {
                 LOG.info("Deleting display {}: {}", display.getId(), display.delete());
