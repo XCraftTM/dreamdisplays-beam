@@ -78,5 +78,8 @@
   "ddbeam.dialog.camera_mode.loading": "Reading modes…",
   "ddbeam.dialog.camera_mode.value": "%s × %s · %s FPS · %s",
   "ddbeam.dialog.camera_mode.value.nofps": "%s × %s · %s",
-  "ddbeam.dialog.camera_mode.tip": "What the camera itself sends. Some cameras reach their full size and frame rate only as MJPEG. Applies from the next Go Live / Switch."
+  "ddbeam.dialog.camera_mode.tip": "What the camera itself sends. Some cameras reach their full size and frame rate only as MJPEG. Applies from the next Go Live / Switch.",
+  "ddbeam.cast.video_paused": "The display's video is paused while you cast.",
+  "ddbeam.cast.ended_by_video": "A video was started on the display, so your cast ended.",
+  "ddbeam.cast.hidden_by_video": "You started the video, so the cast on this display is hidden for you until it starts again."
 }

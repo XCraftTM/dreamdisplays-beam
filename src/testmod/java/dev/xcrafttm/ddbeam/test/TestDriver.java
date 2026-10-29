@@ -27,6 +27,8 @@ import java.util.UUID;
  *   <li>{@code cast} (default): casts {@code -Dddbeam.test.source} (test, monitor1, camera1, window1) onto the
  *       display, shoots it, then Dream Displays' menu with the Cast button and the cast dialog (both tabs).</li>
  *   <li>{@code stream}: opens the world to LAN (port 25700), casts and waits for the viewer.</li>
+ *   <li>{@code video}: plays a video on the display, casts (the video must pause), then sets another video (the
+ *       cast must end).</li>
  *   <li>{@code viewer}: joins it (see the viewer run in build.gradle), shoots the other player's cast.</li>
  * </ul>
  */
@@ -92,6 +94,10 @@ public final class TestDriver implements ClientModInitializer {
         Targets.Target target = targets.get(0);
         if (MODE.equals("click")) {
             clickTick(mc, now, target);
+            return;
+        }
+        if (MODE.equals("video")) {
+            videoTick(mc, now, target);
             return;
         }
         if (castAt == 0 && sceneAt != 0 && now - sceneAt < 9000) {
@@ -238,6 +244,54 @@ public final class TestDriver implements ClientModInitializer {
             shot(mc, "stream-caster");
             status();
             doneAt = now;
+        }
+    }
+
+    private static final String VIDEO = System.getProperty("ddbeam.test.video", "https://youtu.be/-ie3I_bHOeU");
+
+    /** A cast and the display's video take turns: the cast pauses the video, a new video ends the cast. */
+    private void videoTick(Minecraft mc, long now, Targets.Target target) {
+        com.dreamdisplays.api.Display display = null;
+        for (com.dreamdisplays.api.Display d : com.dreamdisplays.api.DreamDisplays.getDisplays()) {
+            if (d.getId().getUuid().equals(target.id())) display = d;
+        }
+        if (display == null) return;
+        String state = display.getState().getClass().getSimpleName();
+        switch (step) {
+            case 0 -> {
+                TestScene.LOG.info("Video test: setting {}", VIDEO);
+                display.setUrl(VIDEO);
+                step = 1;
+                stepAt = now;
+            }
+            case 1 -> {
+                boolean playing = state.equals("Playing");
+                if (!playing && now - stepAt < 60_000) return;
+                if (now - stepAt < 4000) return;
+                TestScene.LOG.info("Video test: before the cast the video is {}", state);
+                shot(mc, "video-playing");
+                Casts.start(target, new LocalCast.Settings(CaptureSource.test(), RES * 16 / 9, RES, FPS, true, true));
+                castAt = now;
+                step = 2;
+                stepAt = now;
+            }
+            case 2 -> {
+                if (now - stepAt < 5000) return;
+                TestScene.LOG.info("Video test: during the cast the video is {}, cast {}", state, Casts.local() == null ? "none" : "running");
+                shot(mc, "video-cast");
+                display.setUrl(VIDEO + (VIDEO.contains("?") ? "&" : "?") + "t=60");
+                step = 3;
+                stepAt = now;
+            }
+            case 3 -> {
+                if (now - stepAt < 6000) return;
+                TestScene.LOG.info("Video test: after a new video the cast is {}, the video {}", Casts.local() == null ? "ended" : "STILL RUNNING", state);
+                shot(mc, "video-after");
+                Casts.stop();
+                doneAt = now;
+            }
+            default -> {
+            }
         }
     }
 

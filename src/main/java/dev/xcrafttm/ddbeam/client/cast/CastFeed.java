@@ -1,6 +1,7 @@
 package dev.xcrafttm.ddbeam.client.cast;
 
 import com.dreamdisplays.platform.client.render.DisplayUnlitRenderTypes;
+import dev.xcrafttm.ddbeam.client.compat.Lumen;
 import dev.xcrafttm.ddbeam.DdBeam;
 import net.minecraft.client.Minecraft;
 //#if MC >= 1.21.11
@@ -148,6 +149,8 @@ public final class CastFeed {
             renderType = DisplayUnlitRenderTypes.INSTANCE.create("ddbeam_cast", id);
         }
         Textures.write(texture, frame.pixels(), width, height);
+        // Dream Displays Lumen lights the room in the cast's colors
+        Lumen.frame(display, frame.pixels(), width, height);
         shown++;
     }
 
@@ -184,6 +187,7 @@ public final class CastFeed {
         JpegDecoder.Decoded left = ready.getAndSet(null);
         if (left != null) left.free();
         releaseTexture();
+        Lumen.end(display);
     }
 
     /** Puts a JPEG frame together from its parts; a frame with a part missing is dropped. */

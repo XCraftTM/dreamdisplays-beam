@@ -17,6 +17,7 @@ import net.minecraft.world.phys.Vec3;
 
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -31,6 +32,10 @@ public final class Casts {
 
     private static final Map<UUID, CastFeed> FEEDS = new ConcurrentHashMap<>();
     private static final Map<UUID, AudioPlayer> REMOTE_AUDIO = new HashMap<>();
+    /** Per display with a cast: its video paused, and watched for one that starts. */
+    private static final Map<UUID, VideoGuard> GUARDS = new HashMap<>();
+    /** Other players' casts hidden here (display to caster) because this player started the display's video. */
+    private static final Map<UUID, UUID> HIDDEN = new HashMap<>();
     private static LocalCast local;
 
     private Casts() {
@@ -69,6 +74,7 @@ public final class Casts {
         if (old != null) old.close();
         AudioPlayer oldAudio = REMOTE_AUDIO.remove(target.id());
         if (oldAudio != null) oldAudio.close();
+        HIDDEN.remove(target.id());
         LocalCast cast = new LocalCast(target, settings);
         local = cast;
         FEEDS.put(cast.display, cast.feed);
@@ -77,12 +83,16 @@ public final class Casts {
     }
 
     public static void stop() {
+        stop(Texts.tr("ddbeam.cast.stopped"));
+    }
+
+    private static void stop(Component why) {
         LocalCast cast = local;
         if (cast == null) return;
         local = null;
         FEEDS.remove(cast.display, cast.feed);
         cast.stop();
-        message(Texts.tr("ddbeam.cast.stopped"));
+        message(why);
     }
 
     // ---- from the server (client thread) ----
@@ -92,6 +102,7 @@ public final class Casts {
         if (!BeamConfig.get().showOtherCasts) return;
         LocalCast cast = local;
         if (cast != null && cast.display.equals(frame.display())) return;
+        if (frame.caster().equals(HIDDEN.get(frame.display()))) return;
         CastFeed feed = FEEDS.get(frame.display());
         if (feed == null || feed.caster == null || !feed.caster.equals(frame.caster())) {
             if (feed != null) feed.close();
@@ -107,6 +118,7 @@ public final class Casts {
         if (!BeamConfig.get().showOtherCasts) return;
         LocalCast cast = local;
         if (cast != null && cast.display.equals(piece.display())) return;
+        if (piece.caster().equals(HIDDEN.get(piece.display()))) return;
         int w = piece.width(), h = piece.height();
         if (w <= 0 || h <= 0 || w > JpegDecoder.MAX_SIDE || h > JpegDecoder.MAX_SIDE) return;
         CastFeed feed = FEEDS.get(piece.display());
@@ -139,6 +151,7 @@ public final class Casts {
     public static void onStop(UUID display) {
         LocalCast cast = local;
         if (cast != null && cast.display.equals(display)) return;
+        HIDDEN.remove(display);
         dropRemote(display);
     }
 
@@ -169,6 +182,7 @@ public final class Casts {
                 if (audio != null) audio.close();
             }
         }
+        guardVideos();
         LocalCast cast = local;
         if (cast != null) cast.tick();
         if (REMOTE_AUDIO.isEmpty() && (cast == null || cast.localAudio == null)) return;
@@ -202,6 +216,33 @@ public final class Casts {
         return player == null ? "-" : player.stats();
     }
 
+    /** A cast pauses its display's video; a video started there ends the cast (or hides another player's here). */
+    private static void guardVideos() {
+        GUARDS.keySet().removeIf(display -> !FEEDS.containsKey(display));
+        for (UUID display : FEEDS.keySet()) {
+            if (GUARDS.containsKey(display)) continue;
+            VideoGuard guard = new VideoGuard(display);
+            GUARDS.put(display, guard);
+            LocalCast cast = local;
+            if (guard.pausedVideo && cast != null && cast.display.equals(display)) message(Texts.tr("ddbeam.cast.video_paused"));
+        }
+        for (VideoGuard guard : List.copyOf(GUARDS.values())) {
+            if (!guard.videoStarted()) continue;
+            GUARDS.remove(guard.display);
+            LocalCast cast = local;
+            if (cast != null && cast.display.equals(guard.display)) {
+                stop(Texts.tr("ddbeam.cast.ended_by_video"));
+                continue;
+            }
+            CastFeed feed = FEEDS.get(guard.display);
+            if (feed != null && feed.caster != null) {
+                HIDDEN.put(guard.display, feed.caster);
+                dropRemote(guard.display);
+                message(Texts.tr("ddbeam.cast.hidden_by_video"));
+            }
+        }
+    }
+
     public static Map<UUID, CastFeed> feeds() {
         return FEEDS;
     }
@@ -215,5 +256,7 @@ public final class Casts {
         FEEDS.clear();
         for (AudioPlayer audio : REMOTE_AUDIO.values()) audio.close();
         REMOTE_AUDIO.clear();
+        GUARDS.clear();
+        HIDDEN.clear();
     }
 }
