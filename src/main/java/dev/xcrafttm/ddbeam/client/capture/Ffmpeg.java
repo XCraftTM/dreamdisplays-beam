@@ -34,6 +34,25 @@ public final class Ffmpeg {
         return path;
     }
 
+    private static final java.util.Map<String, Boolean> FILTERS = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Whether this FFmpeg has a filter (asked once per filter). Blocks: not on the render thread. */
+    public static boolean hasFilter(String name) {
+        return FILTERS.computeIfAbsent(name, n -> {
+            try {
+                for (String line : run(List.of("-filters"), 8000).split("\\R")) {
+                    String[] parts = line.trim().split("\\s+");
+                    if (parts.length >= 2 && parts[1].equals(n)) return true;
+                }
+            } catch (IOException e) {
+                DdBeam.LOGGER.warn("Could not ask FFmpeg for its filters: {}", e.toString());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return false;
+        });
+    }
+
     /** Runs FFmpeg with these arguments and returns what it wrote to stderr (where it lists devices). */
     public static String run(List<String> args, long timeoutMs) throws IOException, InterruptedException {
         List<String> command = new ArrayList<>();

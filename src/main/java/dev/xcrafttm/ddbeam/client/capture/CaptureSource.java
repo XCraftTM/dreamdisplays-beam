@@ -14,13 +14,18 @@ import java.util.Locale;
  * @param index monitor: its number (for ddagrab), camera: its device index (macOS)
  * @param name  monitor on macOS: its AVFoundation device index; camera: the device name (Windows, macOS) or path
  *              (Linux); window: its title
- * @param title what people know a camera by (Linux: the sysfs name of the device)
+ * @param title  what people know a camera by (Linux: the sysfs name of the device)
+ * @param handle window on Windows: its HWND (0 when only the title is known)
  */
-public record CaptureSource(Kind kind, int index, String name, int x, int y, int width, int height, String title) {
+public record CaptureSource(Kind kind, int index, String name, int x, int y, int width, int height, String title, long handle) {
     public enum Kind { MONITOR, CAMERA, WINDOW, TEST }
 
+    public CaptureSource(Kind kind, int index, String name, int x, int y, int width, int height, String title) {
+        this(kind, index, name, x, y, width, height, title, 0);
+    }
+
     public CaptureSource(Kind kind, int index, String name, int x, int y, int width, int height) {
-        this(kind, index, name, x, y, width, height, name);
+        this(kind, index, name, x, y, width, height, name, 0);
     }
 
     /** Linux under Wayland: the desktop's own picker chooses the screen or window (see WaylandPortal). */
@@ -34,16 +39,22 @@ public record CaptureSource(Kind kind, int index, String name, int x, int y, int
 
     /** Same source, for picking it again from a fresh list. */
     public String key() {
-        return kind + ":" + index + ":" + name;
+        // a window keeps its handle while its title changes (browser tabs)
+        return handle != 0 ? kind + ":" + handle : kind + ":" + index + ":" + name;
     }
 
     public static CaptureSource test() {
         return new CaptureSource(Kind.TEST, 0, "", 0, 0, 1280, 720);
     }
 
-    /** A window by title; its process (for its own audio) is not known. */
+    /** A window by title: the open window with that title (or one containing it), else just the title. */
     public static CaptureSource window(String title) {
-        return new CaptureSource(Kind.WINDOW, 0, title, 0, 0, 0, 0);
+        CaptureSource contains = null;
+        for (CaptureSource w : WindowList.list()) {
+            if (w.name().equalsIgnoreCase(title)) return w;
+            if (contains == null && w.name().toLowerCase(Locale.ROOT).contains(title.toLowerCase(Locale.ROOT))) contains = w;
+        }
+        return contains != null ? contains : new CaptureSource(Kind.WINDOW, 0, title, 0, 0, 0, 0);
     }
 
     public Component label() {
@@ -102,8 +113,17 @@ public record CaptureSource(Kind kind, int index, String name, int x, int y, int
                     args.addAll(List.of("-i", name));
                 }
             }
-            case WINDOW -> args.addAll(List.of("-f", "gdigrab", "-framerate", rate, "-draw_mouse", config.showCursor ? "1" : "0",
-                    "-i", "title=" + name));
+            case WINDOW -> {
+                if (handle != 0 && Ffmpeg.hasFilter("gfxcapture")) {
+                    // Windows Graphics Capture: sees what GPU-drawn windows (browsers, most apps) show, unlike GDI,
+                    // and follows the window by its handle while its title changes
+                    args.addAll(List.of("-f", "lavfi", "-i", "gfxcapture=hwnd=" + handle + ":max_framerate=" + rate
+                            + ":capture_cursor=" + (config.showCursor ? 1 : 0) + ":resize_mode=scale_aspect,hwdownload,format=bgra"));
+                } else {
+                    args.addAll(List.of("-f", "gdigrab", "-framerate", rate, "-draw_mouse", config.showCursor ? "1" : "0",
+                            "-i", "title=" + name));
+                }
+            }
             case TEST -> args.addAll(List.of("-re", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=" + rate));
         }
         return args;

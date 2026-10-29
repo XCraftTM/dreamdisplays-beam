@@ -233,6 +233,7 @@ public final class TestDriver implements ClientModInitializer {
 
     private static CaptureSource source(Minecraft mc) {
         if (SOURCE.equals("test")) return CaptureSource.test();
+        if (SOURCE.startsWith("title:")) return CaptureSource.window(SOURCE.substring(6));
         int n = Integer.parseInt(SOURCE.replaceAll("\\D", "")) - 1;
         List<CaptureSource> list = SOURCE.startsWith("monitor") ? Sources.monitors()
                 : SOURCE.startsWith("window") ? Sources.windows() : Sources.refresh().join();

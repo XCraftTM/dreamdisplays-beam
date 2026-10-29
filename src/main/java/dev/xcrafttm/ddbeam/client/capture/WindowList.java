@@ -20,8 +20,8 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
 
 /**
  * The application windows on Windows (what a taskbar shows: visible, titled, not owned, no tool windows, not
- * cloaked), through user32 with Java's foreign function API. Each becomes a WINDOW source whose index is its
- * process id (for the application's own audio).
+ * cloaked), through user32 with Java's foreign function API. Each becomes a WINDOW source with its handle (to
+ * capture it) and its process id as index (for the application's own audio).
  */
 public final class WindowList {
     private static final Linker LINKER = Linker.nativeLinker();
@@ -92,7 +92,7 @@ public final class WindowList {
             if (title.isEmpty() || title.equals("Program Manager")) return 1;
             MemorySegment pid = arena.allocate(JAVA_INT);
             int ignored = (int) processId.invokeExact(hwnd, pid);
-            out.add(new CaptureSource(CaptureSource.Kind.WINDOW, pid.get(JAVA_INT, 0), title, 0, 0, 0, 0));
+            out.add(new CaptureSource(CaptureSource.Kind.WINDOW, pid.get(JAVA_INT, 0), title, 0, 0, 0, 0, title, hwnd.address()));
         } catch (Throwable e) {
             return 1;
         }
