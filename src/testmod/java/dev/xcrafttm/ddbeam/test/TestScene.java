@@ -109,14 +109,29 @@ public final class TestScene implements ModInitializer {
         run(server, "tp " + player.getScoreboardName() + (viewer ? " -3.5 -60 11.5 200 2" : " 0.5 -60 11.5 180 2"));
     }
 
+    private static java.util.List<ServerDisplay> toList(Iterable<ServerDisplay> displays) {
+        java.util.List<ServerDisplay> list = new java.util.ArrayList<>();
+        for (ServerDisplay display : displays) list.add(display);
+        return list;
+    }
+
     private static void createDisplay(ServerPlayer player) {
-        for (ServerDisplay display : DreamDisplaysServer.getDisplays()) {
-            LOG.info("Display {} already there", display.getId());
-            return;
+        // -Dddbeam.test.depth=N: the display made anew, N blocks deep from the back wall into the room
+        String depth = System.getProperty("ddbeam.test.depth");
+        if (depth != null) {
+            for (ServerDisplay display : toList(DreamDisplaysServer.getDisplays())) {
+                LOG.info("Deleting display {}: {}", display.getId(), display.delete());
+            }
+        } else {
+            for (ServerDisplay display : DreamDisplaysServer.getDisplays()) {
+                LOG.info("Display {} already there", display.getId());
+                return;
+            }
         }
+        int front = -1 + (depth == null ? 1 : Integer.parseInt(depth)) - 1;
         // 8 x 4 blocks of the back wall, facing into the room
         ServerDisplay display = DreamDisplaysServer.getDisplays().create(player.getUUID(), "minecraft:overworld",
-                -4, -59, -1, 3, -56, -1, DisplayFacing.SOUTH);
+                -4, -59, -1, 3, -56, front, DisplayFacing.SOUTH);
         LOG.info("Created display {}", display == null ? "-" : display.getId());
     }
 }

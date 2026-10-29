@@ -91,7 +91,7 @@ loom {
             vmArgs '-Xmx3G'
             if (javaRelease >= 22) vmArg '--enable-native-access=ALL-UNNAMED'
             if (!project.hasProperty('testMode')) vmArg '-Dddbeam.test.mode=cast'
-            ['testPrefix': 'prefix', 'testMode': 'mode', 'testSource': 'source', 'testRes': 'res', 'testFps': 'fps', 'testVideo': 'video'].each { prop, key ->
+            ['testPrefix': 'prefix', 'testMode': 'mode', 'testSource': 'source', 'testRes': 'res', 'testFps': 'fps', 'testVideo': 'video', 'testDepth': 'depth'].each { prop, key ->
                 if (project.hasProperty(prop)) vmArg "-Dddbeam.test.${key}=${project.property(prop)}"
             }
         }
@@ -106,7 +106,7 @@ loom {
             // -PtestMode=cast: the dialog test on that server (e.g. one without Beam: "Stream to players" greyed out)
             vmArgs '-Xmx3G', "-Dddbeam.test.mode=${project.findProperty('testMode') ?: 'stream'}", '-Dddbeam.test.server=127.0.0.1:25700'
             if (javaRelease >= 22) vmArg '--enable-native-access=ALL-UNNAMED'
-            ['testPrefix': 'prefix', 'testSource': 'source', 'testRes': 'res', 'testFps': 'fps', 'testVideo': 'video'].each { prop, key ->
+            ['testPrefix': 'prefix', 'testSource': 'source', 'testRes': 'res', 'testFps': 'fps', 'testVideo': 'video', 'testDepth': 'depth'].each { prop, key ->
                 if (project.hasProperty(prop)) vmArg "-Dddbeam.test.${key}=${project.property(prop)}"
             }
         }
