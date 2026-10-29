@@ -11,6 +11,11 @@ sound.
 - **Camera mode**: for a camera, the dialog lists what the camera itself can send (size, frame rate and format, as
   FFmpeg reports them) and remembers the choice per camera. Many webcams reach 1080p at 60 FPS only as MJPEG and
   fall back to a slow uncompressed mode by default.
+- **A cast and the display's video take turns**: a cast pauses the display's video (picture and sound); a new video
+  set on the display, or play pressed by the caster, ends the cast. A viewer who presses play hides that cast for
+  themselves until it starts again.
+- **[Dream Displays Lumen](https://github.com/XCraftTM/dreamdisplays-lumen)** (0.1.1+): casts light the room in
+  their colors like videos do.
 - The picture is drawn through Dream Displays' own display renderer, so it sits exactly where its videos do, with
   the display's rotation, brightness and shader-pack handling. It works on displays without a video too.
 - **Streaming**: with Beam on the server (or in singleplayer / LAN), players within 96 blocks of the display see
@@ -47,7 +52,7 @@ sound.
 
 ## Paper plugin
 
-Put `dreamdisplays-beam-paper-0.2.0.jar` into `plugins/` next to Dream Displays. It relays casts like the Fabric
+Put `dreamdisplays-beam-paper-0.2.1.jar` into `plugins/` next to Dream Displays. It relays casts like the Fabric
 server part: who may cast, the 96 block range, the bandwidth limit; it never decodes anything. Settings in
 `plugins/DreamDisplaysBeam/config.yml` (same as `ddbeam-server.json` below); the permission `ddbeam.cast.any`
 (default: operators) lets a player cast onto displays they do not own. Folia is not supported.
@@ -90,7 +95,7 @@ and "Jukebox/Note Blocks" volumes. Server: `config/ddbeam-server.json`:
 ## Building and testing
 
 ```bash
-./gradlew build                      # build/libs/dreamdisplays-beam-0.2.0+26.3.jar
+./gradlew build                      # build/libs/dreamdisplays-beam-0.2.1+26.3.jar
 ./gradlew build -Pminecraft_version=1.20.1   # any version from versions/*.properties
 ./gradlew runAutotest                # test scene: casts the test pattern, screenshots in run/autotest/<mc>/screenshots
 ./gradlew runAutotest -PtestSource=monitor1
