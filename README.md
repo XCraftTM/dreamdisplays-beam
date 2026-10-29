@@ -52,7 +52,7 @@ sound.
 
 ## Paper plugin
 
-Put `dreamdisplays-beam-paper-0.2.1.jar` into `plugins/` next to Dream Displays. It relays casts like the Fabric
+Put `dreamdisplays-beam-paper-0.2.2.jar` into `plugins/` next to Dream Displays. It relays casts like the Fabric
 server part: who may cast, the 96 block range, the bandwidth limit; it never decodes anything. Settings in
 `plugins/DreamDisplaysBeam/config.yml` (same as `ddbeam-server.json` below); the permission `ddbeam.cast.any`
 (default: operators) lets a player cast onto displays they do not own. Folia is not supported.
@@ -97,7 +97,7 @@ and "Jukebox/Note Blocks" volumes. Server: `config/ddbeam-server.json`:
 ## Building and testing
 
 ```bash
-./gradlew build                      # build/libs/dreamdisplays-beam-0.2.1+26.3.jar
+./gradlew build                      # build/libs/dreamdisplays-beam-0.2.2+26.3.jar
 ./gradlew build -Pminecraft_version=1.20.1   # any version from versions/*.properties
 ./gradlew runAutotest                # test scene: casts the test pattern, screenshots in run/autotest/<mc>/screenshots
 ./gradlew runAutotest -PtestSource=monitor1
