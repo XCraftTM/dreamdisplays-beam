@@ -64,6 +64,31 @@ public final class BeamPayloads {
         }
     }
 
+    /**
+     * Both ways: a piece of a cast's H.264 video (MPEG-TS) at the cast's own size and frame rate. Pieces come in
+     * order; a player can start anywhere, the decoder waits for the next key frame.
+     */
+    public record Stream(UUID display, UUID caster, int seq, int width, int height, byte[] data) implements CustomPacketPayload {
+        public static final Type<Stream> TYPE = typeOf("stream");
+        public static final StreamCodec<ByteBuf, Stream> CODEC = StreamCodec.of(
+                (buf, s) -> {
+                    UUIDUtil.STREAM_CODEC.encode(buf, s.display());
+                    UUIDUtil.STREAM_CODEC.encode(buf, s.caster());
+                    ByteBufCodecs.VAR_INT.encode(buf, s.seq());
+                    ByteBufCodecs.VAR_INT.encode(buf, s.width());
+                    ByteBufCodecs.VAR_INT.encode(buf, s.height());
+                    ByteBufCodecs.byteArray(MAX_FRAME_BYTES).encode(buf, s.data());
+                },
+                buf -> new Stream(UUIDUtil.STREAM_CODEC.decode(buf), UUIDUtil.STREAM_CODEC.decode(buf),
+                        ByteBufCodecs.VAR_INT.decode(buf), ByteBufCodecs.VAR_INT.decode(buf), ByteBufCodecs.VAR_INT.decode(buf),
+                        ByteBufCodecs.byteArray(MAX_FRAME_BYTES).decode(buf)));
+
+        @Override
+        public Type<Stream> type() {
+            return TYPE;
+        }
+    }
+
     /** Both ways: one packet of a cast's audio, IMA ADPCM, 48 kHz mono (about 40 ms). */
     public record Audio(UUID display, UUID caster, int seq, byte[] data) implements CustomPacketPayload {
         public static final int MAX_BYTES = 16 * 1024;
@@ -98,6 +123,8 @@ public final class BeamPayloads {
         toServer.registerLarge(Frame.TYPE, Frame.CODEC, MAX_FRAME_BYTES + 64);
         toServer.register(Audio.TYPE, Audio.CODEC);
         toClient.register(Audio.TYPE, Audio.CODEC);
+        toServer.registerLarge(Stream.TYPE, Stream.CODEC, MAX_FRAME_BYTES + 64);
+        toClient.registerLarge(Stream.TYPE, Stream.CODEC, MAX_FRAME_BYTES + 64);
         toClient.register(Stop.TYPE, Stop.CODEC);
         toClient.register(Notice.TYPE, Notice.CODEC);
         toClient.registerLarge(Frame.TYPE, Frame.CODEC, MAX_FRAME_BYTES + 64);

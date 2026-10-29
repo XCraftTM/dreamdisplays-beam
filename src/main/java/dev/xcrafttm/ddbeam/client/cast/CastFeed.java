@@ -9,6 +9,8 @@ import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.resources.Identifier;
 
+import org.lwjgl.system.MemoryUtil;
+
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -39,6 +41,9 @@ public final class CastFeed {
     private volatile long received, decoded, failed;
     private long shown;
 
+    /** The other player's H.264 stream, decoded by FFmpeg (client thread). */
+    StreamDecoder decoder;
+
     // render thread only
     private DynamicTexture texture;
     private Identifier textureId;
@@ -57,6 +62,28 @@ public final class CastFeed {
         received++;
         pending.set(jpeg);
         schedule();
+    }
+
+    /** A frame decoded elsewhere (the H.264 stream), RGBA in memory from MemoryUtil.memAlloc. Any thread. */
+    public void submitDecoded(java.nio.ByteBuffer rgba, int width, int height) {
+        if (closed) {
+            MemoryUtil.memFree(rgba);
+            return;
+        }
+        lastFrameNs = System.nanoTime();
+        received++;
+        decoded++;
+        JpegDecoder.Decoded old = ready.getAndSet(new JpegDecoder.Decoded(rgba, width, height, false));
+        if (old != null) old.free();
+        if (closed) {
+            JpegDecoder.Decoded left = ready.getAndSet(null);
+            if (left != null) left.free();
+        }
+    }
+
+    /** Stream data arrived: the cast is alive even while the decoder still waits for a key frame. */
+    public void touch() {
+        lastFrameNs = System.nanoTime();
     }
 
     private void schedule() {
@@ -145,6 +172,9 @@ public final class CastFeed {
     /** Frees everything; call on the render thread. */
     public void close() {
         closed = true;
+        StreamDecoder d = decoder;
+        decoder = null;
+        if (d != null) d.close();
         pending.set(null);
         JpegDecoder.Decoded left = ready.getAndSet(null);
         if (left != null) left.free();

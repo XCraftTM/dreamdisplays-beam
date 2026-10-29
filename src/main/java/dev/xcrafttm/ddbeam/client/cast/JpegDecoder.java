@@ -15,10 +15,15 @@ final class JpegDecoder {
     private JpegDecoder() {
     }
 
-    /** A decoded frame in native memory; {@link #free()} it once uploaded. */
-    record Decoded(ByteBuffer pixels, int width, int height) {
+    /** A decoded RGBA frame in native memory; {@link #free()} it once uploaded. */
+    record Decoded(ByteBuffer pixels, int width, int height, boolean fromStb) {
+        Decoded(ByteBuffer pixels, int width, int height) {
+            this(pixels, width, height, true);
+        }
+
         void free() {
-            STBImage.stbi_image_free(pixels);
+            if (fromStb) STBImage.stbi_image_free(pixels);
+            else MemoryUtil.memFree(pixels);
         }
     }
 

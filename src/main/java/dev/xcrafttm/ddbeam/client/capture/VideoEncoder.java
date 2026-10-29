@@ -1,0 +1,122 @@
+package dev.xcrafttm.ddbeam.client.capture;
+
+import dev.xcrafttm.ddbeam.DdBeam;
+import dev.xcrafttm.ddbeam.client.BeamConfig;
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * The H.264 encoder for streaming a cast to other players. JPEG frames stand alone, so a 1440p60 cast would need
+ * about 17 MB/s; H.264 only sends what changes and needs about 1.5 MB/s for the same picture.
+ * <p>
+ * Hardware encoders come first, each tried once with a short test encode (an encoder that is built into FFmpeg but
+ * has no matching GPU or driver fails there), then libx264 on the CPU:
+ * <ul>
+ *   <li>Windows: NVIDIA NVENC, AMD AMF, Intel Quick Sync, then Media Foundation's hardware encoder (whatever GPU
+ *       driver provides one, e.g. Qualcomm on ARM laptops).</li>
+ *   <li>Linux: NVIDIA NVENC, then VAAPI (AMD and Intel, through Mesa or Intel's media driver).</li>
+ *   <li>macOS: VideoToolbox (Apple Silicon and Intel Macs).</li>
+ * </ul>
+ * H.264 because every player can decode it (hardware decoding with {@code -hwaccel auto} on all of the above).
+ */
+public final class VideoEncoder {
+    private static volatile String chosen;
+    private static volatile boolean probed;
+
+    private VideoEncoder() {
+    }
+
+    private static List<String> candidates() {
+        return switch (Sources.os()) {
+            case "windows" -> List.of("h264_nvenc", "h264_amf", "h264_qsv", "h264_mf", "libx264");
+            case "mac" -> List.of("h264_videotoolbox", "libx264");
+            default -> List.of("h264_nvenc", "h264_vaapi", "libx264");
+        };
+    }
+
+    /** VAAPI's render node (the first GPU), for Linux. */
+    private static String vaapiDevice() {
+        String configured = System.getProperty("ddbeam.vaapiDevice");
+        if (configured != null) return configured;
+        for (int i = 128; i < 136; i++) {
+            File node = new File("/dev/dri/renderD" + i);
+            if (node.exists()) return node.getPath();
+        }
+        return "/dev/dri/renderD128";
+    }
+
+    /** The encoder to use, null when this FFmpeg can encode no H.264 at all. Blocks: not on the render thread. */
+    public static synchronized String get() {
+        String configured = BeamConfig.get().streamEncoder;
+        if (configured != null && !configured.isBlank() && !configured.equals("auto")) return configured;
+        if (probed) return chosen;
+        for (String encoder : candidates()) {
+            try {
+                List<String> args = new ArrayList<>(List.of("-loglevel", "error"));
+                args.addAll(deviceArgs(encoder));
+                args.addAll(List.of("-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-frames:v", "5",
+                        "-vf", "format=" + inputFormat(encoder)));
+                args.addAll(options(encoder, 2000, 30));
+                args.addAll(List.of("-f", "null", "-"));
+                String out = Ffmpeg.run(args, 10_000);
+                if (out.isBlank()) {
+                    chosen = encoder;
+                    break;
+                }
+                DdBeam.LOGGER.info("Encoder {} not usable: {}", encoder, out.lines().findFirst().orElse(""));
+            } catch (Exception e) {
+                DdBeam.LOGGER.info("Encoder {} not usable: {}", encoder, e.toString());
+            }
+        }
+        probed = true;
+        DdBeam.LOGGER.info("Stream encoder: {}", chosen == null ? "none (casts go out as JPEG frames)" : chosen);
+        return chosen;
+    }
+
+    /** FFmpeg arguments that go before the inputs (a hardware device the encoder needs). */
+    public static List<String> deviceArgs(String encoder) {
+        return encoder.equals("h264_vaapi") ? List.of("-vaapi_device", vaapiDevice()) : List.of();
+    }
+
+    /** The end of the filter chain that feeds the encoder: its pixel format (and the upload to the GPU for VAAPI). */
+    public static String inputFormat(String encoder) {
+        return switch (encoder) {
+            case "h264_vaapi" -> "nv12,hwupload";
+            // hardware encoders behind Media Foundation take NV12 only
+            case "h264_mf" -> "nv12";
+            default -> "yuv420p";
+        };
+    }
+
+    /** Bits per second for a picture: about 12 Mbit/s for 1440p60, at least 2.5 Mbit/s. */
+    public static int bitrateKbps(int width, int height, int fps) {
+        int configured = BeamConfig.get().streamBitrateKbps;
+        if (configured > 0) return configured;
+        return (int) Math.clamp((long) width * height * fps * 0.055 / 1000, 2500, 25_000);
+    }
+
+    /**
+     * Encoder settings for live streaming: constant bit rate, no B-frames (no delay for reordering) and a key frame
+     * every two seconds, so a player who comes into range has a picture within two seconds.
+     */
+    public static List<String> options(String encoder, int kbps, int fps) {
+        String rate = kbps + "k", buffer = Math.max(500, kbps / 2) + "k", gop = Integer.toString(Math.max(2, fps * 2));
+        List<String> args = new ArrayList<>(List.of("-c:v", encoder));
+        switch (encoder) {
+            case "h264_nvenc" -> args.addAll(List.of("-preset", "p4", "-tune", "ll", "-rc", "cbr", "-forced-idr", "1"));
+            case "h264_amf" -> args.addAll(List.of("-usage", "lowlatency", "-rc", "cbr"));
+            case "h264_qsv" -> args.addAll(List.of("-preset", "veryfast", "-look_ahead", "0"));
+            // hardware only: the software Media Foundation encoder is slower than libx264
+            case "h264_mf" -> args.addAll(List.of("-hw_encoding", "1", "-rate_control", "cbr", "-scenario", "display_remoting"));
+            case "h264_vaapi" -> args.addAll(List.of("-rc_mode", "CBR"));
+            case "h264_videotoolbox" -> args.addAll(List.of("-realtime", "1"));
+            case "libx264" -> args.addAll(List.of("-preset", "veryfast", "-tune", "zerolatency"));
+            default -> {
+            }
+        }
+        args.addAll(List.of("-b:v", rate, "-maxrate", rate, "-bufsize", buffer, "-g", gop, "-bf", "0"));
+        return args;
+    }
+}

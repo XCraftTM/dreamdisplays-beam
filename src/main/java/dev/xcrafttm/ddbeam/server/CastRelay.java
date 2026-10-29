@@ -37,6 +37,7 @@ public final class CastRelay {
         long lastFrameNs = System.nanoTime();
         long lastSentNs;
         long lastAudioNs;
+        long dropped;
         double budget;
         long budgetNs = System.nanoTime();
 
@@ -62,6 +63,7 @@ public final class CastRelay {
             if (session != null && session.caster.equals(ctx.player().getUUID())) end(ctx.server(), session);
         });
         ServerPlayNetworking.registerGlobalReceiver(BeamPayloads.Frame.TYPE, (payload, ctx) -> frame(ctx.server(), ctx.player(), payload));
+        ServerPlayNetworking.registerGlobalReceiver(BeamPayloads.Stream.TYPE, (payload, ctx) -> stream(ctx.server(), ctx.player(), payload));
         ServerPlayNetworking.registerGlobalReceiver(BeamPayloads.Audio.TYPE, (payload, ctx) -> audio(ctx.server(), ctx.player(), payload));
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> server.execute(() -> {
             UUID player = handler.player.getUUID();
@@ -147,19 +149,49 @@ public final class CastRelay {
         session.budget -= size;
         session.lastSentNs = now;
 
-        BeamPayloads.Frame out = new BeamPayloads.Frame(session.display, session.caster, payload.seq(), payload.jpeg());
+        deliver(server, player, session, new BeamPayloads.Frame(session.display, session.caster, payload.seq(), payload.jpeg()),
+                BeamPayloads.Frame.TYPE);
+    }
+
+    /**
+     * A piece of the cast's H.264 video. Unlike JPEG frames these cannot be thinned out (every piece builds on the
+     * ones before), so there is no frame rate limit; only the byte budget applies, and the encoder's bit rate stays
+     * well below it.
+     */
+    private static void stream(MinecraftServer server, ServerPlayer player, BeamPayloads.Stream payload) {
+        Session session = SESSIONS.get(payload.display());
+        if (session == null || !session.caster.equals(player.getUUID())) return;
+        long now = System.nanoTime();
+        session.lastFrameNs = now;
+        double rate = ServerConfig.get().maxKilobytesPerSecond * 1024.0;
+        session.budget = Math.min(rate, session.budget + rate * (now - session.budgetNs) / 1e9);
+        session.budgetNs = now;
+        if (payload.data().length > session.budget) {
+            // dropped: the players' decoders pick up again at the next key frame
+            session.dropped++;
+            return;
+        }
+        session.budget -= payload.data().length;
+        deliver(server, player, session, new BeamPayloads.Stream(session.display, session.caster, payload.seq(), payload.width(),
+                payload.height(), payload.data()), BeamPayloads.Stream.TYPE);
+    }
+
+    /** Sends to the players near the display, and tells those who left its range that the cast is gone for them. */
+    private static void deliver(MinecraftServer server, ServerPlayer caster, Session session,
+                                net.minecraft.network.protocol.common.custom.CustomPacketPayload out,
+                                net.minecraft.network.protocol.common.custom.CustomPacketPayload.Type<?> type) {
+        ServerConfig config = ServerConfig.get();
         Set<UUID> reached = new HashSet<>();
         ServerLevel level = levelOf(server, session.world);
         if (level != null) {
             double range2 = config.viewDistance * config.viewDistance;
             for (ServerPlayer viewer : level.players()) {
-                if (viewer == player || viewer.distanceToSqr(session.x, session.y, session.z) > range2) continue;
-                if (!ServerPlayNetworking.canSend(viewer, BeamPayloads.Frame.TYPE)) continue;
+                if (viewer == caster || viewer.distanceToSqr(session.x, session.y, session.z) > range2) continue;
+                if (!ServerPlayNetworking.canSend(viewer, type)) continue;
                 ServerPlayNetworking.send(viewer, out);
                 reached.add(viewer.getUUID());
             }
         }
-        // players who walked away or changed worlds see the display's own picture again
         for (Iterator<UUID> it = session.viewers.iterator(); it.hasNext(); ) {
             UUID viewer = it.next();
             if (reached.contains(viewer)) continue;

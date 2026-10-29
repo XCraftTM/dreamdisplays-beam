@@ -52,6 +52,7 @@ public final class LocalCast {
     private long lastSentNs;
     private volatile byte[] lastJpeg;
     private volatile String audioKind = "";
+    private volatile long streamBytes;
 
     LocalCast(Targets.Target target, Settings settings) {
         this.display = target.id();
@@ -63,7 +64,8 @@ public final class LocalCast {
         this.feed = new CastFeed(display, null);
         boolean hearHere = source.kind() == CaptureSource.Kind.CAMERA || source.kind() == CaptureSource.Kind.TEST;
         this.localAudio = settings.audio() && hearHere ? new AudioPlayer() : null;
-        this.capture = new FfmpegCapture(source, width, height, settings.fps(), this::onFrame, this::onEnd);
+        this.capture = new FfmpegCapture(source, width, height, settings.fps(), this::onFrame,
+                settings.share() ? this::onStream : null, this::onEnd);
     }
 
     /** Starts capturing in the background (FFmpeg may have to be found or downloaded first). */
@@ -167,11 +169,23 @@ public final class LocalCast {
         }
     }
 
-    /** Capture thread: show it here, stream it at the share frame rate. */
+    /** Stream thread: a piece of the H.264 video for the other players, sent as it comes. */
+    private void onStream(byte[] data) {
+        if (ended || !serverShares) return;
+        streamBytes += data.length;
+        int s = seq++;
+        Minecraft.getInstance().execute(() -> {
+            if (Casts.local() == this && ClientPlayNetworking.canSend(BeamPayloads.Stream.TYPE)) {
+                ClientPlayNetworking.send(new BeamPayloads.Stream(display, NOBODY, s, width, height, data));
+            }
+        });
+    }
+
+    /** Capture thread: show it here; without an H.264 encoder stream it as JPEG at the share frame rate. */
     private void onFrame(byte[] jpeg) {
         if (ended) return;
         feed.submit(jpeg);
-        if (!serverShares || jpeg.length > BeamPayloads.MAX_FRAME_BYTES) return;
+        if (!serverShares || capture.streaming() || jpeg.length > BeamPayloads.MAX_FRAME_BYTES) return;
         long now = System.nanoTime();
         int fps = Math.max(1, Math.min(BeamConfig.get().shareFps, settings.fps()));
         if (now - lastSentNs < 1_000_000_000L / fps) return;
@@ -193,7 +207,7 @@ public final class LocalCast {
     void tick() {
         byte[] last = lastJpeg;
         long now = System.nanoTime();
-        if (serverShares && last != null && now - lastSentNs > 1_000_000_000L) {
+        if (serverShares && !capture.streaming() && last != null && now - lastSentNs > 1_000_000_000L) {
             lastSentNs = now;
             send(last);
         }
@@ -234,6 +248,15 @@ public final class LocalCast {
 
     public long frames() {
         return capture.frames();
+    }
+
+    /** How the others get it: "h264" (video stream), "jpeg" (frames) or "" (not shared). */
+    public String streamKind() {
+        return !serverShares ? "" : capture.streaming() ? "h264" : "jpeg";
+    }
+
+    public long streamBytes() {
+        return streamBytes;
     }
 
     /** Client thread. */

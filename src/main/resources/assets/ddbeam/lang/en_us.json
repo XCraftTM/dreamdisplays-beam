@@ -69,7 +69,7 @@
   "ddbeam.command.source.audio": "Audio input: %s",
   "ddbeam.command.reloaded": "Settings reloaded.",
   "ddbeam.command.status.local": "Casting %s at %s × %s, %s FPS: %s frames, %s, audio: %s",
-  "ddbeam.command.status.shared": "streamed to the others",
+  "ddbeam.command.status.shared": "streamed to the others (%s)",
   "ddbeam.command.status.private": "only for you",
   "ddbeam.command.status.feed": "Display %s: caster %s, frames received / decoded / shown %s, audio %s"
 }

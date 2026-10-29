@@ -16,12 +16,19 @@ import java.util.function.Consumer;
 /**
  * One FFmpeg process that captures a source and writes it as a stream of JPEG frames ({@code mpjpeg}: every frame
  * comes with its length, so frames are cut exactly). The frames go to {@code onFrame} on the reader thread.
+ * <p>
+ * When the cast is shared, the same process also encodes the picture as H.264 in MPEG-TS for the other players
+ * (same size and frame rate) and sends it to a local socket; its data goes to {@code onStream}. MPEG-TS lets a
+ * player start decoding anywhere, at the next key frame.
  */
 public final class FfmpegCapture implements AutoCloseable {
     private final CaptureSource source;
     private final int width, height, fps;
     private final Consumer<byte[]> onFrame;
+    private final Consumer<byte[]> onStream;
     private final Consumer<String> onEnd;
+    private volatile boolean streaming;
+    private volatile java.net.ServerSocket streamSocket;
     private final ArrayDeque<String> lastLines = new ArrayDeque<>();
     private volatile Process process;
     private volatile boolean closed;
@@ -33,12 +40,24 @@ public final class FfmpegCapture implements AutoCloseable {
      * @param onEnd  called once if FFmpeg ends by itself, with its last error output
      */
     public FfmpegCapture(CaptureSource source, int width, int height, int fps, Consumer<byte[]> onFrame, Consumer<String> onEnd) {
+        this(source, width, height, fps, onFrame, null, onEnd);
+    }
+
+    /** @param onStream gets the H.264 stream for the other players; null: no stream */
+    public FfmpegCapture(CaptureSource source, int width, int height, int fps, Consumer<byte[]> onFrame,
+                         Consumer<byte[]> onStream, Consumer<String> onEnd) {
         this.source = source;
         this.width = width;
         this.height = height;
         this.fps = fps;
         this.onFrame = onFrame;
+        this.onStream = onStream;
         this.onEnd = onEnd;
+    }
+
+    /** True once FFmpeg encodes the H.264 stream for the other players (else they get the JPEG frames). */
+    public boolean streaming() {
+        return streaming;
     }
 
     public long frames() {
@@ -56,13 +75,17 @@ public final class FfmpegCapture implements AutoCloseable {
 
     /** The scale filter for the configured fit, ending in the pixel format the JPEG encoder takes. */
     private String filter() {
+        return scaleFilter() + ",format=yuvj420p";
+    }
+
+    private String scaleFilter() {
         String size = width + ":" + height;
         String scale = switch (BeamConfig.get().fit.toLowerCase(Locale.ROOT)) {
             case "stretch" -> "scale=" + size;
             case "fill" -> "scale=" + size + ":force_original_aspect_ratio=increase,crop=" + size;
             default -> "scale=" + size + ":force_original_aspect_ratio=decrease,pad=" + size + ":(ow-iw)/2:(oh-ih)/2:black";
         };
-        return "fps=" + fps + "," + scale + ",setsar=1,format=yuvj420p";
+        return "fps=" + fps + "," + scale + ",setsar=1";
     }
 
     /** Starts FFmpeg and its reader threads; blocks while FFmpeg is located (do not call it on the render thread). */
@@ -77,9 +100,29 @@ public final class FfmpegCapture implements AutoCloseable {
         } else {
             command.add(Ffmpeg.path());
             command.addAll(List.of("-hide_banner", "-loglevel", "error", "-nostdin"));
+            String encoder = onStream != null ? VideoEncoder.get() : null;
+            if (encoder != null) command.addAll(VideoEncoder.deviceArgs(encoder));
             command.addAll(source.inputArgs(fps));
-            command.addAll(List.of("-an", "-vf", filter(), "-c:v", "mjpeg",
-                    "-q:v", Integer.toString(quality), "-f", "mpjpeg", "pipe:1"));
+            if (encoder != null) {
+                // one capture, two outputs: JPEG frames for this display, H.264 for the other players
+                java.net.ServerSocket socket = new java.net.ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress());
+                streamSocket = socket;
+                int kbps = VideoEncoder.bitrateKbps(width, height, fps);
+                command.addAll(List.of("-an", "-filter_complex", "[0:v]" + scaleFilter()
+                                + ",split=2[a][b];[a]format=yuvj420p[local];[b]format=" + VideoEncoder.inputFormat(encoder) + "[net]",
+                        "-map", "[local]", "-c:v", "mjpeg", "-q:v", Integer.toString(quality), "-f", "mpjpeg", "pipe:1",
+                        "-map", "[net]"));
+                command.addAll(VideoEncoder.options(encoder, kbps, fps));
+                command.addAll(List.of("-f", "mpegts", "-muxdelay", "0", "-muxpreload", "0", "-flush_packets", "1",
+                        "tcp://127.0.0.1:" + socket.getLocalPort()));
+                streaming = true;
+                Thread stream = new Thread(() -> readStream(socket), "ddbeam-ffmpeg-stream");
+                stream.setDaemon(true);
+                stream.start();
+            } else {
+                command.addAll(List.of("-an", "-vf", filter(), "-c:v", "mjpeg",
+                        "-q:v", Integer.toString(quality), "-f", "mpjpeg", "pipe:1"));
+            }
         }
         DdBeam.LOGGER.info("Capturing {}: {}", source.kind(), String.join(" ", command));
         Process started = new ProcessBuilder(command).start();
@@ -94,6 +137,27 @@ public final class FfmpegCapture implements AutoCloseable {
         Thread frames = new Thread(() -> readFrames(started), "ddbeam-ffmpeg-frames");
         frames.setDaemon(true);
         frames.start();
+    }
+
+    /** The H.264 stream: handed on in pieces as FFmpeg writes them (a piece ends where FFmpeg pauses). */
+    private void readStream(java.net.ServerSocket socket) {
+        try (socket) {
+            socket.setSoTimeout(15_000);
+            try (java.net.Socket client = socket.accept(); InputStream in = client.getInputStream()) {
+                byte[] buf = new byte[64 * 1024];
+                java.io.ByteArrayOutputStream pending = new java.io.ByteArrayOutputStream(128 * 1024);
+                int n;
+                while (!closed && (n = in.read(buf)) != -1) {
+                    pending.write(buf, 0, n);
+                    if (pending.size() >= 64 * 1024 || in.available() == 0) {
+                        onStream.accept(pending.toByteArray());
+                        pending.reset();
+                    }
+                }
+            }
+        } catch (IOException e) {
+            if (!closed) DdBeam.LOGGER.warn("The stream for the other players stopped: {}", e.toString());
+        }
     }
 
     private void readErrors(Process p) {
@@ -184,6 +248,13 @@ public final class FfmpegCapture implements AutoCloseable {
     @Override
     public void close() {
         closed = true;
+        java.net.ServerSocket socket = streamSocket;
+        if (socket != null) {
+            try {
+                socket.close();
+            } catch (IOException ignored) {
+            }
+        }
         Process p = process;
         if (p == null) return;
         p.destroy();

@@ -22,8 +22,11 @@ public final class ServerConfig {
     public String whoCanCast = "owner";
     /** Players within this many blocks of a display receive its cast. */
     public double viewDistance = 96;
-    /** Per caster: bandwidth that is relayed to each viewer, in kilobytes per second; frames above it are dropped. */
-    public int maxKilobytesPerSecond = 2048;
+    /**
+     * Per caster: bandwidth that is relayed to each viewer, in kilobytes per second; data above it is dropped. A
+     * 1440p60 cast as H.264 needs about 1500.
+     */
+    public int maxKilobytesPerSecond = 4096;
     /** Per caster: frames per second that are relayed at most. */
     public int maxFps = 30;
 

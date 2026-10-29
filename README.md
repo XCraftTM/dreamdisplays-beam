@@ -10,7 +10,13 @@ sound.
 - The picture is drawn through Dream Displays' own display renderer, so it sits exactly where its videos do, with
   the display's rotation, brightness and shader-pack handling. It works on displays without a video too.
 - **Streaming**: with Beam on the server (or in singleplayer / LAN), players within 96 blocks of the display see
-  the cast. The server only passes the JPEG frames on (it checks who may cast and limits the bandwidth).
+  the cast at its own resolution and frame rate. It goes out as H.264 video (about 1.4 MB/s for 1440p60, instead
+  of about 17 MB/s as JPEG frames), encoded by the same FFmpeg process that captures, on the GPU where there is
+  one: NVIDIA NVENC, AMD AMF, Intel Quick Sync, Windows Media Foundation, Linux VAAPI (AMD/Intel), macOS
+  VideoToolbox; libx264 on the CPU otherwise (`streamEncoder` / `streamBitrateKbps` in the config). Players decode
+  it with Dream Displays' FFmpeg, in hardware where possible. A player who comes into range has the picture within
+  two seconds (a key frame every two seconds). The server only passes the data on (it checks who may cast and
+  limits the bandwidth); an FFmpeg without any H.264 encoder falls back to JPEG frames.
 - **Sound**:
   - Screen and application casts send what the computer plays to the other players only. You don't hear it twice,
     since you already hear it from your computer. On Windows the game's own sound is left out (process loopback,
@@ -56,7 +62,7 @@ Windows grabber, camera size, sound options, volume, audio range). Server: `conf
 | relay | true | pass casts on at all |
 | whoCanCast | owner | `everyone`, `owner` (the display's owner and operators) or `operators` |
 | viewDistance | 96 | blocks around the display that receive a cast |
-| maxKilobytesPerSecond | 2048 | per caster; frames above it are dropped |
+| maxKilobytesPerSecond | 4096 | per caster; data above it is dropped (1440p60 needs about 1500) |
 | maxFps | 30 | per caster |
 
 ## Building and testing

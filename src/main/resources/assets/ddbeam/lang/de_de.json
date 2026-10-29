@@ -69,7 +69,7 @@
   "ddbeam.command.source.audio": "Toneingang: %s",
   "ddbeam.command.reloaded": "Einstellungen neu geladen.",
   "ddbeam.command.status.local": "Übertrage %s mit %s × %s, %s FPS: %s Bilder, %s, Ton: %s",
-  "ddbeam.command.status.shared": "an die anderen gesendet",
+  "ddbeam.command.status.shared": "an die anderen gesendet (%s)",
   "ddbeam.command.status.private": "nur für dich",
   "ddbeam.command.status.feed": "Display %s: von %s, Bilder empfangen / dekodiert / gezeigt %s, Ton %s"
 }

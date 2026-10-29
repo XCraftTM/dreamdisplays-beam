@@ -96,6 +96,30 @@ public final class Casts {
         feed.submit(frame.jpeg());
     }
 
+    /** A piece of another player's H.264 cast: decoded at the cast's own size and frame rate. */
+    public static void onStream(BeamPayloads.Stream piece) {
+        if (!BeamConfig.get().showOtherCasts) return;
+        LocalCast cast = local;
+        if (cast != null && cast.display.equals(piece.display())) return;
+        int w = piece.width(), h = piece.height();
+        if (w <= 0 || h <= 0 || w > JpegDecoder.MAX_SIDE || h > JpegDecoder.MAX_SIDE) return;
+        CastFeed feed = FEEDS.get(piece.display());
+        if (feed == null || feed.caster == null || !feed.caster.equals(piece.caster())) {
+            if (feed != null) feed.close();
+            feed = new CastFeed(piece.display(), piece.caster());
+            FEEDS.put(piece.display(), feed);
+        }
+        StreamDecoder decoder = feed.decoder;
+        if (decoder == null || decoder.width != w || decoder.height != h) {
+            // a new cast size: a new decoder (it waits for the next key frame)
+            if (decoder != null) decoder.close();
+            decoder = new StreamDecoder(feed, w, h);
+            feed.decoder = decoder;
+        }
+        feed.touch();
+        decoder.write(piece.data());
+    }
+
     public static void onAudio(BeamPayloads.Audio packet) {
         if (!BeamConfig.get().showOtherCasts) return;
         LocalCast cast = local;

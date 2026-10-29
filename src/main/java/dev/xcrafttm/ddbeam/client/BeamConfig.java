@@ -31,7 +31,11 @@ public final class BeamConfig {
     public boolean showCursor = true;
     /** Stream casts to the other players near the display (needs Beam on the server). */
     public boolean share = true;
-    /** Frames per second that are streamed to the other players. */
+    /** The other players get the cast as H.264 video: "auto" (hardware first, then libx264) or an FFmpeg encoder. */
+    public String streamEncoder = "auto";
+    /** Bit rate of that video in kbit/s; 0: from the size and frame rate (about 12000 for 1440p60). */
+    public int streamBitrateKbps = 0;
+    /** Only when no H.264 encoder works: JPEG frames per second that are streamed to the other players. */
     public int shareFps = 15;
     /** Show what other players cast. */
     public boolean showOtherCasts = true;

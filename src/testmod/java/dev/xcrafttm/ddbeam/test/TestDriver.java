@@ -235,7 +235,7 @@ public final class TestDriver implements ClientModInitializer {
                 return;
             }
             // a few seconds of audio first
-            if (now - stepAt < 4000) return;
+            if (now - stepAt < 10000) return;
             status();
             shot(mc, "viewer");
             doneAt = now;
@@ -256,8 +256,9 @@ public final class TestDriver implements ClientModInitializer {
         TestScene.LOG.info("Game FPS: {}", Minecraft.getInstance().getFps());
         LocalCast cast = Casts.local();
         if (cast != null) {
-            TestScene.LOG.info("Local cast: {} {}x{} @{}, {} frames, shared {}, audio '{}'", cast.source.label().getString(),
-                    cast.width, cast.height, cast.settings.fps(), cast.frames(), cast.sharedWithOthers(), cast.audioKind());
+            TestScene.LOG.info("Local cast: {} {}x{} @{}, {} frames, shared {} ({}, {} KB sent), audio '{}'", cast.source.label().getString(),
+                    cast.width, cast.height, cast.settings.fps(), cast.frames(), cast.sharedWithOthers(), cast.streamKind(),
+                    cast.streamBytes() / 1024, cast.audioKind());
         }
         for (Map.Entry<UUID, CastFeed> e : Casts.feeds().entrySet()) {
             TestScene.LOG.info("Feed {} (caster {}): {}, audio {}", e.getKey(), e.getValue().caster, e.getValue().stats(),

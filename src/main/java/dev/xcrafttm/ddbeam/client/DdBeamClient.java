@@ -45,6 +45,7 @@ public final class DdBeamClient implements ClientModInitializer {
         openKey = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.ddbeam.menu", InputConstants.KEY_B, category));
 
         ClientPlayNetworking.registerGlobalReceiver(BeamPayloads.Frame.TYPE, (payload, ctx) -> Casts.onFrame(payload));
+        ClientPlayNetworking.registerGlobalReceiver(BeamPayloads.Stream.TYPE, (payload, ctx) -> Casts.onStream(payload));
         ClientPlayNetworking.registerGlobalReceiver(BeamPayloads.Audio.TYPE, (payload, ctx) -> Casts.onAudio(payload));
         ClientPlayNetworking.registerGlobalReceiver(BeamPayloads.Stop.TYPE, (payload, ctx) -> Casts.onStop(payload.display()));
         ClientPlayNetworking.registerGlobalReceiver(BeamPayloads.Notice.TYPE, (payload, ctx) -> Casts.onNotice(payload));
@@ -137,8 +138,9 @@ public final class DdBeamClient implements ClientModInitializer {
                         feedback(ctx, Component.translatable("ddbeam.cast.none"));
                     } else {
                         feedback(ctx, Component.translatable("ddbeam.command.status.local", cast.source.label(), cast.width, cast.height,
-                                cast.settings.fps(), cast.frames(), Component.translatable(cast.sharedWithOthers()
-                                        ? "ddbeam.command.status.shared" : "ddbeam.command.status.private"),
+                                cast.settings.fps(), cast.frames(), (cast.sharedWithOthers()
+                                        ? Component.translatable("ddbeam.command.status.shared", cast.streamKind().toUpperCase(java.util.Locale.ROOT))
+                                        : Component.translatable("ddbeam.command.status.private")),
                                 cast.audioKind().isEmpty() ? "-" : cast.audioKind()));
                     }
                     for (Map.Entry<UUID, CastFeed> e : Casts.feeds().entrySet()) {
