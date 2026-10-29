@@ -69,7 +69,7 @@ loom {
             programArgs '--quickPlaySingleplayer', 'beam-test', '--width', '1280', '--height', '720', '--username', 'Caster'
             vmArgs '-Xmx3G', '--enable-native-access=ALL-UNNAMED'
             if (!project.hasProperty('testMode')) vmArg '-Dddbeam.test.mode=cast'
-            ['testPrefix': 'prefix', 'testMode': 'mode', 'testSource': 'source'].each { prop, key ->
+            ['testPrefix': 'prefix', 'testMode': 'mode', 'testSource': 'source', 'testRes': 'res', 'testFps': 'fps'].each { prop, key ->
                 if (project.hasProperty(prop)) vmArg "-Dddbeam.test.${key}=${project.property(prop)}"
             }
         }

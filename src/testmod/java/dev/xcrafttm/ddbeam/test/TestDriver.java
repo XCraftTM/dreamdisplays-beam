@@ -34,6 +34,8 @@ public final class TestDriver implements ClientModInitializer {
     private static final String SOURCE = System.getProperty("ddbeam.test.source", "test");
     private static final String PREFIX = System.getProperty("ddbeam.test.prefix", "beam");
     private static final long TIMEOUT_MS = 240_000;
+    private static final int RES = Integer.getInteger("ddbeam.test.res", 720);
+    private static final int FPS = Integer.getInteger("ddbeam.test.fps", 30);
 
     private long started, sceneAt, castAt, stepAt, doneAt;
     private int step;
@@ -76,7 +78,16 @@ public final class TestDriver implements ClientModInitializer {
             clickTick(mc, now, target);
             return;
         }
+        if (castAt == 0 && sceneAt != 0 && now - sceneAt < 9000) {
+            // game frame rate before the cast, for comparison
+            if (now - sceneAt > 8000 && stepAt == 0) {
+                stepAt = now;
+                TestScene.LOG.info("Game FPS without cast: {}", mc.getFps());
+            }
+            return;
+        }
         if (castAt == 0) {
+            stepAt = 0;
             if (MODE.equals("stream")) {
                 boolean lan = mc.getSingleplayerServer() != null
                         && mc.getSingleplayerServer().publishServer(MinecraftServer.MultiplayerScope.LAN, true, 25700);
@@ -89,7 +100,7 @@ public final class TestDriver implements ClientModInitializer {
                 return;
             }
             TestScene.LOG.info("Casting {} onto {}", source.label().getString(), target.id());
-            Casts.start(target, new LocalCast.Settings(source, 1280, 720, 30, true, true));
+            Casts.start(target, new LocalCast.Settings(source, RES * 16 / 9, RES, FPS, true, true));
             castAt = now;
             return;
         }
@@ -100,7 +111,8 @@ public final class TestDriver implements ClientModInitializer {
         }
         switch (step) {
             case 0 -> {
-                if (feed == null || feed.shown() < 30) return;
+                // let it run a while at full speed first
+                if (feed == null || feed.shown() < 30 || now - castAt < 10_000) return;
                 status();
                 shot(mc, "cast");
                 step++;
@@ -241,6 +253,7 @@ public final class TestDriver implements ClientModInitializer {
     }
 
     private static void status() {
+        TestScene.LOG.info("Game FPS: {}", Minecraft.getInstance().getFps());
         LocalCast cast = Casts.local();
         if (cast != null) {
             TestScene.LOG.info("Local cast: {} {}x{} @{}, {} frames, shared {}, audio '{}'", cast.source.label().getString(),
