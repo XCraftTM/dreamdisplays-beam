@@ -72,6 +72,10 @@ public final class TestDriver implements ClientModInitializer {
         // the scene places the player two seconds after joining
         if (now - sceneAt < 4000) return;
         Targets.Target target = targets.getFirst();
+        if (MODE.equals("click")) {
+            clickTick(mc, now, target);
+            return;
+        }
         if (castAt == 0) {
             if (MODE.equals("stream")) {
                 boolean lan = mc.getSingleplayerServer() != null
@@ -175,6 +179,37 @@ public final class TestDriver implements ClientModInitializer {
         if (viewerSeen && players <= 1) {
             shot(mc, "stream-caster");
             status();
+            doneAt = now;
+        }
+    }
+
+    /** Opens the dialog and waits for real mouse clicks (driven from outside), logging what is chosen. */
+    private void clickTick(Minecraft mc, long now, Targets.Target target) {
+        if (castAt == 0) {
+            mc.setScreenAndShow(new BeamScreen(null, target));
+            castAt = now;
+            stepAt = now;
+            TestScene.LOG.info("Dialog open, waiting for clicks");
+            return;
+        }
+        if (now - stepAt < 1000) return;
+        stepAt = now;
+        Object selected = null;
+        if (mc.gui.screen() instanceof BeamScreen dialog) {
+            try {
+                var field = BeamScreen.class.getDeclaredField("selected");
+                field.setAccessible(true);
+                selected = field.get(dialog);
+            } catch (ReflectiveOperationException e) {
+                selected = e.toString();
+            }
+        }
+        TestScene.LOG.info("Click test: screen {}, selected {}, casting {}",
+                mc.gui.screen() == null ? "none" : mc.gui.screen().getClass().getSimpleName(), selected,
+                Casts.local() == null ? "no" : Casts.local().source.label().getString());
+        if (now - castAt > 90_000 || (Casts.local() != null && now - castAt > 3000 && mc.gui.screen() == null)) {
+            shot(mc, "click");
+            Casts.stop();
             doneAt = now;
         }
     }

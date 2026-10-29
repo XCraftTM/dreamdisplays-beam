@@ -8,6 +8,7 @@ import dev.xcrafttm.ddbeam.client.cast.LocalCast;
 import dev.xcrafttm.ddbeam.client.cast.Targets;
 import dev.xcrafttm.ddbeam.net.BeamPayloads;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -414,7 +415,7 @@ public final class BeamScreen extends Screen {
             openSelect = null;
             if (open.button.isMouseOver(event.x(), event.y())) return true;
         }
-        if (event.button() == 0) {
+        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
             for (Tile tile : List.copyOf(tiles)) {
                 if (tile.rect().contains(event.x(), event.y())) {
                     select(tile.source());
@@ -441,11 +442,11 @@ public final class BeamScreen extends Screen {
     @Override
     public boolean keyPressed(KeyEvent event) {
         // Enter: go live
-        if (event.input() == 256 && openSelect != null) {
+        if (event.input() == InputConstants.KEY_ESCAPE && openSelect != null) {
             openSelect = null;
             return true;
         }
-        if ((event.input() == 257 || event.input() == 335) && selected != null) {
+        if ((event.input() == InputConstants.KEY_RETURN || event.input() == InputConstants.KEY_NUMPADENTER) && selected != null) {
             goLive();
             return true;
         }
