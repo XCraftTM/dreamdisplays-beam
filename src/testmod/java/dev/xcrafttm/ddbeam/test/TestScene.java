@@ -43,7 +43,7 @@ public final class TestScene implements ModInitializer {
                 }
                 place(server, p.player());
                 if (!p.player().getScoreboardName().equals("Viewer")) {
-                    DreamDisplaysServer.onReady(() -> server.execute(() -> createDisplay(p.player())));
+                    DreamDisplaysServer.onReady(() -> server.execute(() -> createDisplay(server, p.player())));
                 }
             }
         });
@@ -115,10 +115,15 @@ public final class TestScene implements ModInitializer {
         return list;
     }
 
-    private static void createDisplay(ServerPlayer player) {
-        // -Dddbeam.test.depth=N: the display made anew, N blocks deep from the back wall into the room
+    private static void createDisplay(MinecraftServer server, ServerPlayer player) {
+        // -Dddbeam.test.depth / .facing / .bottom: the display made anew, N blocks deep from a wall into the room,
+        // facing SOUTH (back wall), NORTH (front wall), EAST or WEST (side walls), its lowest row at .bottom
         String depth = System.getProperty("ddbeam.test.depth");
-        if (depth != null) {
+        String facingName = System.getProperty("ddbeam.test.facing");
+        String bottomName = System.getProperty("ddbeam.test.bottom");
+        if (depth != null || facingName != null || bottomName != null) {
+            // nothing in the room in front of the walls (light tests look at the bare floor)
+            run(server, "fill -9 -60 0 9 -52 19 minecraft:air");
             for (ServerDisplay display : toList(DreamDisplaysServer.getDisplays())) {
                 LOG.info("Deleting display {}: {}", display.getId(), display.delete());
             }
@@ -128,10 +133,20 @@ public final class TestScene implements ModInitializer {
                 return;
             }
         }
-        int front = -1 + (depth == null ? 1 : Integer.parseInt(depth)) - 1;
-        // 8 x 4 blocks of the back wall, facing into the room
-        ServerDisplay display = DreamDisplaysServer.getDisplays().create(player.getUUID(), "minecraft:overworld",
-                -4, -59, -1, 3, -56, front, DisplayFacing.SOUTH);
+        int deep = (depth == null ? 1 : Integer.parseInt(depth)) - 1;
+        int y0 = bottomName == null ? -59 : Integer.parseInt(bottomName), y1 = y0 + 3;
+        DisplayFacing facing = facingName == null ? DisplayFacing.SOUTH : DisplayFacing.valueOf(facingName);
+        // 8 x 4 blocks of a wall, reaching [deep] more blocks into the room
+        ServerDisplay display = switch (facing) {
+            case NORTH -> DreamDisplaysServer.getDisplays().create(player.getUUID(), "minecraft:overworld",
+                    -4, y0, 20 - deep, 3, y1, 20, facing);
+            case EAST -> DreamDisplaysServer.getDisplays().create(player.getUUID(), "minecraft:overworld",
+                    -10, y0, 2, -10 + deep, y1, 9, facing);
+            case WEST -> DreamDisplaysServer.getDisplays().create(player.getUUID(), "minecraft:overworld",
+                    10 - deep, y0, 2, 10, y1, 9, facing);
+            default -> DreamDisplaysServer.getDisplays().create(player.getUUID(), "minecraft:overworld",
+                    -4, y0, -1, 3, y1, -1 + deep, DisplayFacing.SOUTH);
+        };
         LOG.info("Created display {}", display == null ? "-" : display.getId());
     }
 }

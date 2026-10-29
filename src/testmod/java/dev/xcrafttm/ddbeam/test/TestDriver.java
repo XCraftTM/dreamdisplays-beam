@@ -100,6 +100,10 @@ public final class TestDriver implements ClientModInitializer {
             videoTick(mc, now, target);
             return;
         }
+        if (MODE.equals("light")) {
+            lightTick(mc, now, target);
+            return;
+        }
         if (castAt == 0 && sceneAt != 0 && now - sceneAt < 9000) {
             // game frame rate before the cast, for comparison
             if (now - sceneAt > 8000 && stepAt == 0) {
@@ -244,6 +248,64 @@ public final class TestDriver implements ClientModInitializer {
             shot(mc, "stream-caster");
             status();
             doneAt = now;
+        }
+    }
+
+    /** Casts the test pattern and looks at the foot of the display from the side and from the front (Lumen's light). */
+    private void lightTick(Minecraft mc, long now, Targets.Target target) {
+        switch (step) {
+            case 0 -> {
+                Casts.start(target, new LocalCast.Settings(CaptureSource.test(), RES * 16 / 9, RES, FPS, true, true));
+                castAt = now;
+                step = 1;
+                stepAt = now;
+            }
+            case 1, 3 -> {
+                if (now - stepAt < 5000) return;
+                com.dreamdisplays.api.display.model.DisplayInfo info = null;
+                for (com.dreamdisplays.api.Display d : com.dreamdisplays.api.DreamDisplays.getDisplays()) {
+                    if (d.getId().getUuid().equals(target.id())) info = d.getInfo();
+                }
+                if (info == null) return;
+                var b = info.getBounds();
+                // the foot of the picture, half a block in front of it
+                double nx = 0, nz = 0, cx, cz, ux = 0, uz = 0;
+                switch (b.getFacing()) {
+                    case NORTH -> { nz = -1; ux = 1; cx = b.getX() + b.getWidth() / 2.0; cz = b.getZ(); }
+                    case EAST -> { nx = 1; uz = 1; cx = b.getX() + 1; cz = b.getZ() + b.getWidth() / 2.0; }
+                    case WEST -> { nx = -1; uz = 1; cx = b.getX(); cz = b.getZ() + b.getWidth() / 2.0; }
+                    default -> { nz = 1; ux = 1; cx = b.getX() + b.getWidth() / 2.0; cz = b.getZ() + 1; }
+                }
+                double fx = cx + nx * 0.5, fy = b.getY(), fz = cz + nz * 0.5;
+                boolean side = step == 1;
+                double ex = fx + nx * (side ? 3 : 5) + ux * (side ? 3.5 : 0), ey = fy + (side ? 2 : 3), ez = fz + nz * (side ? 3 : 5) + uz * (side ? 3.5 : 0);
+                double dx = fx - ex, dy = fy - ey, dz = fz - ez;
+                float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
+                float pitch = (float) -Math.toDegrees(Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)));
+                TestScene.LOG.info("Light test: display {} at {} {} {} facing {}, looking from {} {} {}", target.id(),
+                        b.getX(), b.getY(), b.getZ(), b.getFacing(), ex, ey, ez);
+                // flying: the camera stays where it is put
+                mc.player.getAbilities().flying = true;
+                //#if MC >= 1.21.11
+                mc.player.snapTo(ex, ey - 1.62, ez, yaw, pitch);
+                //#else
+                mc.player.moveTo(ex, ey - 1.62, ez, yaw, pitch);
+                //#endif
+                step++;
+                stepAt = now;
+            }
+            case 2, 4 -> {
+                if (now - stepAt < 1500) return;
+                shot(mc, step == 2 ? "light-side" : "light-front");
+                step++;
+                stepAt = now;
+                if (step == 5) {
+                    Casts.stop();
+                    doneAt = now;
+                }
+            }
+            default -> {
+            }
         }
     }
 
