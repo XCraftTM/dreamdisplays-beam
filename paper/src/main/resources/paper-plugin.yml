@@ -1,10 +1,15 @@
 name: DreamDisplaysBeam
 version: '${version}'
 main: dev.xcrafttm.ddbeam.paper.BeamPaper
-api-version: '1.21'
+api-version: '1.20'
 description: Relays Dream Displays Beam casts (screens, windows, cameras) to the players near a display.
 author: XCraftTM
-softdepend: [DreamDisplays]
+dependencies:
+  server:
+    DreamDisplays:
+      load: BEFORE
+      required: false
+      join-classpath: true
 permissions:
   ddbeam.cast.any:
     description: Cast onto any display, not only your own (with whoCanCast owner or operators).
