@@ -113,7 +113,9 @@ public final class FfmpegCapture implements AutoCloseable {
                         "-map", "[local]", "-c:v", "mjpeg", "-q:v", Integer.toString(quality), "-f", "mpjpeg", "pipe:1",
                         "-map", "[net]"));
                 command.addAll(VideoEncoder.options(encoder, kbps, fps));
-                command.addAll(List.of("-f", "mpegts", "-muxdelay", "0", "-muxpreload", "0", "-flush_packets", "1",
+                // fixed packet ids: the server finds frames and key frames by them (TsUnits)
+                command.addAll(List.of("-f", "mpegts", "-mpegts_start_pid", "256", "-mpegts_pmt_start_pid", "4096",
+                        "-muxdelay", "0", "-muxpreload", "0", "-flush_packets", "1",
                         "tcp://127.0.0.1:" + socket.getLocalPort()));
                 streaming = true;
                 Thread stream = new Thread(() -> readStream(socket), "ddbeam-ffmpeg-stream");

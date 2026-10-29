@@ -415,12 +415,16 @@ public final class TestDriver implements ClientModInitializer {
     }
 
     private static void status() {
-        TestScene.LOG.info("Game FPS: {}", fps(Minecraft.getInstance()));
+        Minecraft mc = Minecraft.getInstance();
+        TestScene.LOG.info("Game FPS: {}", fps(mc));
+        var info = mc.getConnection() == null || mc.player == null ? null : mc.getConnection().getPlayerInfo(mc.player.getUUID());
+        if (info != null) TestScene.LOG.info("Ping: {} ms", info.getLatency());
         LocalCast cast = Casts.local();
         if (cast != null) {
             TestScene.LOG.info("Local cast: {} {}x{} @{}, {} frames, shared {} ({}, {} KB sent), audio '{}'", cast.source.label().getString(),
                     cast.width, cast.height, cast.settings.fps(), cast.frames(), cast.sharedWithOthers(), cast.streamKind(),
                     cast.streamBytes() / 1024, cast.audioKind());
+            TestScene.LOG.info("Frames skipped (connection behind): {}, extra delay {} ms", cast.skippedUnits(), cast.extraDelayMs());
         }
         for (Map.Entry<UUID, CastFeed> e : Casts.feeds().entrySet()) {
             TestScene.LOG.info("Feed {} (caster {}): {}, audio {}", e.getKey(), e.getValue().caster, e.getValue().stats(),

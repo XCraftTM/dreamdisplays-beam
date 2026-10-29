@@ -46,6 +46,15 @@ final class Wire {
         }
     }
 
+    /** A length-prefixed byte array. */
+    byte[] bytes() {
+        int length = varInt();
+        if (length < 0 || at + length > data.length) throw new IllegalArgumentException("bad length");
+        byte[] out = java.util.Arrays.copyOfRange(data, at, at + length);
+        at += length;
+        return out;
+    }
+
     /** Skips a length-prefixed byte array and returns its length. */
     int skipBytes() {
         int length = varInt();

@@ -1,5 +1,7 @@
 package dev.xcrafttm.ddbeam.client.cast;
 
+import dev.xcrafttm.ddbeam.net.TsUnits;
+
 import dev.xcrafttm.ddbeam.DdBeam;
 import dev.xcrafttm.ddbeam.client.capture.Ffmpeg;
 import org.lwjgl.system.MemoryUtil;
@@ -72,14 +74,20 @@ final class StreamDecoder {
             data = java.util.Arrays.copyOfRange(held, from, held.length);
         }
         if (queued.addAndGet(data.length) > MAX_QUEUED) {
+            // FFmpeg cannot keep up: what waits is dropped, and the stream picks up again at the next key frame
+            // (going on in the middle of a frame would show broken pictures up to there)
             queue.clear();
-            queued.set(data.length);
+            queued.set(0);
+            waiting = new ByteArrayOutputStream();
+            write(data);
+            return;
         }
         queue.add(data);
     }
 
     /**
-     * Where FFmpeg can start: the last PAT packet before a packet that holds an SPS (H.264 NAL type 7), or -1.
+     * Where FFmpeg can start: the last PAT packet before a packet that holds a key frame's parameters (an H.264 SPS, or
+     * HEVC's VPS or SPS, see {@link TsUnits#isKeyNal}), or -1.
      * MPEG-TS packets are 188 bytes, each starting with 0x47.
      */
     static int startOf(byte[] d) {
@@ -104,8 +112,8 @@ final class StreamDecoder {
             int payload = p + 4;
             if (afc == 2) continue;
             if (afc == 3) payload += 1 + (d[p + 4] & 0xFF);
-            for (int i = payload; i + 3 < p + TS; i++) {
-                if (d[i] == 0 && d[i + 1] == 0 && d[i + 2] == 1 && (d[i + 3] & 0x1F) == 7) return lastPat;
+            for (int i = payload; i + 4 < p + TS; i++) {
+                if (d[i] == 0 && d[i + 1] == 0 && d[i + 2] == 1 && TsUnits.isKeyNal(d[i + 3] & 0xFF, d[i + 4] & 0xFF)) return lastPat;
             }
         }
         return -1;

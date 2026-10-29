@@ -25,6 +25,8 @@ sourceSets {
 
 dependencies {
     compileOnly 'io.papermc.paper:paper-api:1.20.1-R0.1-SNAPSHOT'
+    // the server's own Netty (to see how far a player's connection is behind)
+    compileOnly 'io.netty:netty-transport:4.1.97.Final'
 }
 
 tasks.withType(JavaCompile).configureEach {

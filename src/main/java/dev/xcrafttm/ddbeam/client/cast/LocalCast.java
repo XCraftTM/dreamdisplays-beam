@@ -13,6 +13,8 @@ import dev.xcrafttm.ddbeam.client.capture.FfmpegCapture;
 import dev.xcrafttm.ddbeam.client.capture.Sources;
 import dev.xcrafttm.ddbeam.client.capture.WaylandPortal;
 import dev.xcrafttm.ddbeam.net.BeamPayloads;
+import dev.xcrafttm.ddbeam.net.Congestion;
+import dev.xcrafttm.ddbeam.net.TsUnits;
 import dev.xcrafttm.ddbeam.client.BeamClientNet;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
@@ -31,6 +33,18 @@ public final class LocalCast {
     private static final UUID NOBODY = new UUID(0, 0);
     /** 40 ms of audio per packet. */
     private static final int AUDIO_PACKET = AudioCapture.RATE / 25;
+    /**
+     * The video goes out paced: the next piece only when the game connection has less than this waiting on it and is
+     * not slower than usual (see DelayProbe), so the game's own packets (the answer to the server's ping too) get in
+     * between, also between the pieces of a big key frame.
+     */
+    private static final long PACE_LIMIT = 64 * 1024, PACE_LATE_MS = 40;
+    /** Video waiting for the pacer above which frames are skipped (up to the next key frame that finds it empty). */
+    private static final long OUTBOX_LIMIT = 192 * 1024;
+    private static final boolean NO_GATE = Boolean.getBoolean("ddbeam.noStreamGate");
+    /** Extra delay on the game connection (see DelayProbe) at which frames are skipped, and below which they resume. */
+    private static final long BEHIND_MS = 200, CAUGHT_UP_MS = 60;
+    private static final byte[] END = new byte[0];
 
     /** What the dialog chose. */
     public record Settings(CaptureSource source, int maxWidth, int maxHeight, int fps, boolean share, boolean audio) {
@@ -54,6 +68,16 @@ public final class LocalCast {
     private volatile byte[] lastJpeg;
     private volatile String audioKind = "";
     private volatile long streamBytes;
+    private final TsUnits.Splitter splitter = new TsUnits.Splitter();
+    private final TsUnits.Gate gate = new TsUnits.Gate();
+    /** Video handed to the client thread that is not on the connection yet. */
+    private final java.util.concurrent.atomic.AtomicLong queued = new java.util.concurrent.atomic.AtomicLong();
+    /** Pieces waiting for the pacer, and their bytes. */
+    private final java.util.concurrent.LinkedBlockingQueue<byte[]> outbox = new java.util.concurrent.LinkedBlockingQueue<>();
+    private final java.util.concurrent.atomic.AtomicLong outboxBytes = new java.util.concurrent.atomic.AtomicLong();
+    private Thread pacer;
+    private volatile long skippedUnits;
+    final DelayProbe probe = new DelayProbe();
 
     LocalCast(Targets.Target target, Settings settings) {
         this.display = target.id();
@@ -170,20 +194,79 @@ public final class LocalCast {
         }
     }
 
-    /** Stream thread: a piece of the H.264 video for the other players, sent as it comes. */
+    /** Stream thread: the video for the other players, sent a frame at a time as it comes. */
     private void onStream(byte[] data) {
         if (ended || !serverShares) return;
-        streamBytes += data.length;
-        // in packets below Minecraft's size limit
-        for (int at = 0; at < data.length; at += BeamPayloads.MAX_PART) {
-            byte[] piece = java.util.Arrays.copyOfRange(data, at, Math.min(data.length, at + BeamPayloads.MAX_PART));
-            int s = seq++;
-            Minecraft.getInstance().execute(() -> {
-                if (Casts.local() == this && BeamClientNet.canSend(BeamPayloads.STREAM)) {
-                    BeamClientNet.send(BeamPayloads.STREAM, new BeamPayloads.Stream(display, NOBODY, s, width, height, piece).encode());
-                }
-            });
+        splitter.feed(data, this::sendUnit);
+    }
+
+    /**
+     * One frame (with the tables before it). When the video cannot get out as fast as it comes (too much waits for the
+     * pacer, or the connection is slower than usual), the frame is skipped, and so is everything after it up to the next
+     * key frame that finds the way clear: the others see the last whole picture a little longer instead of a broken one.
+     */
+    private void sendUnit(TsUnits.Unit unit) {
+        long waiting = outboxBytes.get(), late = probe.extraMs();
+        boolean congested = waiting > OUTBOX_LIMIT || late > BEHIND_MS;
+        boolean roomForKey = waiting == 0 && late < CAUGHT_UP_MS;
+        // -Dddbeam.noStreamGate=true: everything goes out as it comes (for comparison)
+        if (!NO_GATE && !gate.pass(true, unit.key(), congested, roomForKey)) {
+            skippedUnits++;
+            return;
         }
+        byte[] data = unit.data();
+        streamBytes += data.length;
+        // in packets below Minecraft's size limit, cut on the TS packet grid
+        int part = BeamPayloads.MAX_PART / TsUnits.TS * TsUnits.TS;
+        startPacer();
+        for (int at = 0; at < data.length; at += part) {
+            byte[] piece = java.util.Arrays.copyOfRange(data, at, Math.min(data.length, at + part));
+            outboxBytes.addAndGet(piece.length);
+            outbox.add(piece);
+        }
+    }
+
+    private synchronized void startPacer() {
+        if (pacer != null) return;
+        pacer = new Thread(this::pace, "ddbeam-stream-pacer");
+        pacer.setDaemon(true);
+        pacer.start();
+    }
+
+    /** Pacer thread: hands the pieces to the client thread one at a time, when the connection has room for them. */
+    private void pace() {
+        try {
+            while (!ended) {
+                byte[] piece = outbox.take();
+                if (piece == END) return;
+                while (!NO_GATE && !ended) {
+                    long onConnection = queued.get() + Congestion.pending(Minecraft.getInstance().getConnection());
+                    if (onConnection < PACE_LIMIT && probe.extraMs() < PACE_LATE_MS) break;
+                    Thread.sleep(2);
+                }
+                outboxBytes.addAndGet(-piece.length);
+                int s = seq++;
+                queued.addAndGet(piece.length);
+                Minecraft.getInstance().execute(() -> {
+                    queued.addAndGet(-piece.length);
+                    if (Casts.local() == this && BeamClientNet.canSend(BeamPayloads.STREAM)) {
+                        BeamClientNet.send(BeamPayloads.STREAM, new BeamPayloads.Stream(display, NOBODY, s, width, height, piece).encode());
+                    }
+                });
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /** How much longer than usual the game connection takes now (see DelayProbe). */
+    public long extraDelayMs() {
+        return probe.extraMs();
+    }
+
+    /** Frames not sent because the connection was too far behind. */
+    public long skippedUnits() {
+        return skippedUnits;
     }
 
     /** Capture thread: show it here; without an H.264 encoder stream it as JPEG at the share frame rate. */
@@ -213,6 +296,7 @@ public final class LocalCast {
 
     /** Client tick: a picture that stands still (Wayland sends no frames then) is resent once a second. */
     void tick() {
+        if (serverShares && capture.streaming()) probe.tick();
         byte[] last = lastJpeg;
         long now = System.nanoTime();
         if (serverShares && !capture.streaming() && last != null && now - lastSentNs > 1_000_000_000L) {
@@ -270,6 +354,7 @@ public final class LocalCast {
     /** Client thread. */
     void stop() {
         ended = true;
+        outbox.add(END);
         capture.close();
         AudioCapture a = audio;
         if (a != null) a.close();

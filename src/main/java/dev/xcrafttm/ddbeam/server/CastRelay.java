@@ -4,6 +4,8 @@ import com.dreamdisplays.api.server.DreamDisplaysServer;
 import com.dreamdisplays.api.server.ServerDisplay;
 import dev.xcrafttm.ddbeam.DdBeam;
 import dev.xcrafttm.ddbeam.net.BeamPayloads;
+import dev.xcrafttm.ddbeam.net.Congestion;
+import dev.xcrafttm.ddbeam.net.TsUnits;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import dev.xcrafttm.ddbeam.net.BeamNet;
@@ -40,6 +42,9 @@ public final class CastRelay {
         int keepSeq = -1;
         double budget;
         long budgetNs = System.nanoTime();
+        /** The cast within the byte budget, and each viewer's connection: whole frames only, see TsUnits. */
+        final TsUnits.Gate budgetGate = new TsUnits.Gate();
+        final Map<UUID, TsUnits.Gate> viewerGates = new HashMap<>();
 
         Session(UUID display, UUID caster, String world, double x, double y, double z) {
             this.display = display;
@@ -65,6 +70,10 @@ public final class CastRelay {
         BeamNet.receive(BeamPayloads.FRAME, safe((player, data) -> frame(serverOf(player), player, BeamPayloads.Frame.decode(data))));
         BeamNet.receive(BeamPayloads.STREAM, safe((player, data) -> stream(serverOf(player), player, BeamPayloads.Stream.decode(data))));
         BeamNet.receive(BeamPayloads.AUDIO, safe((player, data) -> audio(serverOf(player), player, BeamPayloads.Audio.decode(data))));
+        // a caster's delay probe goes straight back
+        BeamNet.receive(BeamPayloads.PROBE, safe((player, data) -> {
+            if (data.length == 8 && BeamNet.canSend(player, BeamPayloads.PROBE)) BeamNet.send(player, BeamPayloads.PROBE, data);
+        }));
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> server.execute(() -> {
             UUID player = handler.player.getUUID();
             for (Session session : sessions()) if (session.caster.equals(player)) end(server, session);
@@ -184,9 +193,9 @@ public final class CastRelay {
     }
 
     /**
-     * A piece of the cast's H.264 video. Unlike JPEG frames these cannot be thinned out (every piece builds on the
-     * ones before), so there is no frame rate limit; only the byte budget applies, and the encoder's bit rate stays
-     * well below it.
+     * A piece of the cast's video. Every frame builds on the ones before, so a frame cannot simply be left out: over
+     * the byte budget, or for a viewer whose connection is too far behind, whole frames are left out up to the next key
+     * frame (see TsUnits), and the viewers see the last whole picture a little longer instead of a broken one.
      */
     private static void stream(MinecraftServer server, ServerPlayer player, BeamPayloads.Stream payload) {
         Session session = SESSIONS.get(payload.display());
@@ -196,18 +205,31 @@ public final class CastRelay {
         double rate = ServerConfig.get().maxKilobytesPerSecond * 1024.0;
         session.budget = Math.min(rate, session.budget + rate * (now - session.budgetNs) / 1e9);
         session.budgetNs = now;
-        if (payload.data().length > session.budget) {
-            // dropped: the players' decoders pick up again at the next key frame
+        byte[] data = payload.data();
+        boolean unitStart = TsUnits.startsUnit(data), key = unitStart && TsUnits.holdsKey(data);
+        if (!session.budgetGate.pass(unitStart, key, data.length > session.budget, data.length <= session.budget)) {
             session.dropped++;
             return;
         }
-        session.budget -= payload.data().length;
-        deliver(server, player, session, BeamPayloads.STREAM, new BeamPayloads.Stream(session.display, session.caster, payload.seq(),
-                payload.width(), payload.height(), payload.data()).encode());
+        session.budget = Math.max(0, session.budget - data.length);
+        byte[] out = new BeamPayloads.Stream(session.display, session.caster, payload.seq(), payload.width(), payload.height(), data).encode();
+        deliver(server, player, session, BeamPayloads.STREAM, out, viewer -> {
+            long behind = Congestion.pending(viewer.connection);
+            TsUnits.Gate gate = session.viewerGates.computeIfAbsent(viewer.getUUID(), id -> new TsUnits.Gate());
+            return gate.pass(unitStart, key, behind > VIEWER_QUEUE_LIMIT, behind < VIEWER_QUEUE_LIMIT / 2);
+        });
+    }
+
+    /** How much video may wait on a viewer's connection before frames are left out for them. */
+    private static final long VIEWER_QUEUE_LIMIT = 192 * 1024;
+
+    private static void deliver(MinecraftServer server, ServerPlayer caster, Session session, String channel, byte[] out) {
+        deliver(server, caster, session, channel, out, viewer -> true);
     }
 
     /** Sends to the players near the display, and tells those who left its range that the cast is gone for them. */
-    private static void deliver(MinecraftServer server, ServerPlayer caster, Session session, String channel, byte[] out) {
+    private static void deliver(MinecraftServer server, ServerPlayer caster, Session session, String channel, byte[] out,
+                                java.util.function.Predicate<ServerPlayer> passes) {
         ServerConfig config = ServerConfig.get();
         Set<UUID> reached = new HashSet<>();
         ServerLevel level = levelOf(server, session.world);
@@ -216,7 +238,8 @@ public final class CastRelay {
             for (ServerPlayer viewer : level.players()) {
                 if (viewer == caster || viewer.distanceToSqr(session.x, session.y, session.z) > range2) continue;
                 if (!BeamNet.canSend(viewer, channel)) continue;
-                BeamNet.send(viewer, channel, out);
+                // a viewer whose frames are left out for now is still in range
+                if (passes.test(viewer)) BeamNet.send(viewer, channel, out);
                 reached.add(viewer.getUUID());
             }
         }
@@ -224,6 +247,7 @@ public final class CastRelay {
             UUID viewer = it.next();
             if (reached.contains(viewer)) continue;
             it.remove();
+            session.viewerGates.remove(viewer);
             sendStop(server, viewer, session.display);
         }
         session.viewers.addAll(reached);

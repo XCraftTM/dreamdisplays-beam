@@ -25,7 +25,8 @@ import java.util.UUID;
  */
 public final class BeamPaper extends JavaPlugin implements PluginMessageListener, Listener {
     private static final String START = "ddbeam:start", STOP = "ddbeam:stop", FRAME = "ddbeam:frame",
-            STREAM = "ddbeam:stream", AUDIO = "ddbeam:audio", NOTICE = "ddbeam:notice";
+            STREAM = "ddbeam:stream", AUDIO = "ddbeam:audio", NOTICE = "ddbeam:notice",
+            PROBE = "ddbeam:probe";
     /** A cast whose caster sent nothing for this long is over. */
     private static final long IDLE_NS = 10_000_000_000L;
 
@@ -37,6 +38,9 @@ public final class BeamPaper extends JavaPlugin implements PluginMessageListener
         long lastDataNs = System.nanoTime(), lastFrameNs, lastAudioNs, budgetNs = System.nanoTime();
         double budget;
         int keepSeq = -1;
+        /** The cast within the byte budget, and each viewer's connection: whole frames only, see TsUnits. */
+        final TsUnits.Gate budgetGate = new TsUnits.Gate();
+        final Map<UUID, TsUnits.Gate> viewerGates = new HashMap<>();
 
         Session(UUID display, UUID caster, Displays.Info info) {
             this.display = display;
@@ -50,6 +54,9 @@ public final class BeamPaper extends JavaPlugin implements PluginMessageListener
 
     private final Map<UUID, Session> sessions = new HashMap<>();
     private final Displays displays = new Displays();
+    private Congestion congestion;
+    /** How much video may wait on a viewer's connection before frames are left out for them. */
+    private static final long VIEWER_QUEUE_LIMIT = 192 * 1024;
     private boolean relay;
     private String whoCanCast;
     private double viewDistance;
@@ -58,10 +65,11 @@ public final class BeamPaper extends JavaPlugin implements PluginMessageListener
     @Override
     public void onEnable() {
         saveDefaultConfig();
+        congestion = new Congestion(getLogger());
         loadSettings();
         var messenger = getServer().getMessenger();
-        for (String channel : new String[]{START, STOP, FRAME, STREAM, AUDIO}) messenger.registerIncomingPluginChannel(this, channel, this);
-        for (String channel : new String[]{STOP, FRAME, STREAM, AUDIO, NOTICE}) messenger.registerOutgoingPluginChannel(this, channel);
+        for (String channel : new String[]{START, STOP, FRAME, STREAM, AUDIO, PROBE}) messenger.registerIncomingPluginChannel(this, channel, this);
+        for (String channel : new String[]{STOP, FRAME, STREAM, AUDIO, NOTICE, PROBE}) messenger.registerOutgoingPluginChannel(this, channel);
         getServer().getPluginManager().registerEvents(this, this);
         try {
             getServer().getScheduler().runTaskTimer(this, this::endIdle, 20, 20);
@@ -102,6 +110,10 @@ public final class BeamPaper extends JavaPlugin implements PluginMessageListener
                 case FRAME -> frame(player, message);
                 case STREAM -> stream(player, message);
                 case AUDIO -> audio(player, message);
+                // a caster's delay probe goes straight back
+                case PROBE -> {
+                    if (message.length == 8 && player.getListeningPluginChannels().contains(PROBE)) player.sendPluginMessage(this, PROBE, message);
+                }
                 default -> {
                 }
             }
@@ -191,11 +203,30 @@ public final class BeamPaper extends JavaPlugin implements PluginMessageListener
         deliver(player, session, FRAME, Wire.withCaster(message, player.getUniqueId()));
     }
 
-    /** A piece of the H.264 video: every piece builds on the ones before, so only the byte budget applies. */
+    /**
+     * A piece of the cast's video. Every frame builds on the ones before, so a frame cannot simply be left out: over
+     * the byte budget, or for a viewer whose connection is too far behind, whole frames are left out up to the next key
+     * frame (see TsUnits), and the viewers see the last whole picture a little longer instead of a broken one.
+     */
     private void stream(Player player, byte[] message) {
         Session session = sessionOf(player, message);
-        if (session == null || !spend(session, message.length)) return;
-        deliver(player, session, STREAM, Wire.withCaster(message, player.getUniqueId()));
+        if (session == null) return;
+        Wire wire = new Wire(message);
+        wire.uuid();
+        wire.uuid();
+        wire.varInt();
+        wire.varInt();
+        wire.varInt();
+        byte[] data = wire.bytes();
+        boolean unitStart = TsUnits.startsUnit(data), key = unitStart && TsUnits.holdsKey(data);
+        boolean fits = spend(session, 0) && session.budget >= message.length;
+        if (!session.budgetGate.pass(unitStart, key, !fits, fits)) return;
+        session.budget = Math.max(0, session.budget - message.length);
+        deliver(player, session, STREAM, Wire.withCaster(message, player.getUniqueId()), viewer -> {
+            long behind = congestion.pending(viewer);
+            TsUnits.Gate gate = session.viewerGates.computeIfAbsent(viewer.getUniqueId(), id -> new TsUnits.Gate());
+            return gate.pass(unitStart, key, behind > VIEWER_QUEUE_LIMIT, behind < VIEWER_QUEUE_LIMIT / 2);
+        });
     }
 
     /** Audio goes to whoever gets the cast's video. */
@@ -212,8 +243,12 @@ public final class BeamPaper extends JavaPlugin implements PluginMessageListener
         }
     }
 
-    /** Sends to the players near the display, and tells those who left its range that the cast is gone for them. */
     private void deliver(Player caster, Session session, String channel, byte[] out) {
+        deliver(caster, session, channel, out, viewer -> true);
+    }
+
+    /** Sends to the players near the display, and tells those who left its range that the cast is gone for them. */
+    private void deliver(Player caster, Session session, String channel, byte[] out, java.util.function.Predicate<Player> passes) {
         Set<UUID> reached = new HashSet<>();
         World world = Bukkit.getWorld(session.world);
         if (world != null) {
@@ -222,7 +257,8 @@ public final class BeamPaper extends JavaPlugin implements PluginMessageListener
             for (Player viewer : world.getPlayers()) {
                 if (viewer.equals(caster) || viewer.getLocation().distanceSquared(at) > range2) continue;
                 if (!viewer.getListeningPluginChannels().contains(channel)) continue;
-                viewer.sendPluginMessage(this, channel, out);
+                // a viewer whose frames are left out for now is still in range
+                if (passes.test(viewer)) viewer.sendPluginMessage(this, channel, out);
                 reached.add(viewer.getUniqueId());
             }
         }
@@ -230,6 +266,7 @@ public final class BeamPaper extends JavaPlugin implements PluginMessageListener
             UUID id = it.next();
             if (reached.contains(id)) continue;
             it.remove();
+            session.viewerGates.remove(id);
             sendStop(id, session.display);
         }
         session.viewers.addAll(reached);

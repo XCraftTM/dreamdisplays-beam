@@ -98,25 +98,31 @@ public final class VideoEncoder {
     }
 
     /**
-     * Encoder settings for live streaming: constant bit rate, no B-frames (no delay for reordering) and a key frame
-     * every two seconds, so a player who comes into range has a picture within two seconds.
+     * Encoder settings for live streaming: a variable bit rate up to a cap ([kbps]: a still or calm picture takes a
+     * fraction of it, motion up to it), no B-frames (no delay for reordering) and a key frame every two seconds, so a
+     * player who comes into range has a picture within two seconds. Works for the H.264 and HEVC encoders alike.
      */
     public static List<String> options(String encoder, int kbps, int fps) {
-        String rate = kbps + "k", buffer = Math.max(500, kbps / 2) + "k", gop = Integer.toString(Math.max(2, fps * 2));
+        String cap = kbps + "k", average = Math.max(300, kbps * 3 / 5) + "k", buffer = Math.max(500, kbps / 2) + "k";
+        String gop = Integer.toString(Math.max(2, fps * 2));
+        boolean hevc = encoder.startsWith("hevc");
         List<String> args = new ArrayList<>(List.of("-c:v", encoder));
-        switch (encoder) {
-            case "h264_nvenc" -> args.addAll(List.of("-preset", "p4", "-tune", "ll", "-rc", "cbr", "-forced-idr", "1"));
-            case "h264_amf" -> args.addAll(List.of("-usage", "lowlatency", "-rc", "cbr"));
-            case "h264_qsv" -> args.addAll(List.of("-preset", "veryfast", "-look_ahead", "0"));
+        switch (encoder.substring(encoder.indexOf('_') + 1)) {
+            // with a quality target: what looks right takes no more bits than it needs
+            case "nvenc" -> args.addAll(List.of("-preset", "p4", "-tune", "ll", "-rc", "vbr", "-cq", hevc ? "26" : "23", "-forced-idr", "1"));
+            case "amf" -> args.addAll(List.of("-usage", "lowlatency", "-rc", "vbr_peak"));
+            case "qsv" -> args.addAll(List.of("-preset", "veryfast", "-look_ahead", "0"));
             // hardware only: the software Media Foundation encoder is slower than libx264
-            case "h264_mf" -> args.addAll(List.of("-hw_encoding", "1", "-rate_control", "cbr", "-scenario", "display_remoting"));
-            case "h264_vaapi" -> args.addAll(List.of("-rc_mode", "CBR"));
-            case "h264_videotoolbox" -> args.addAll(List.of("-realtime", "1"));
-            case "libx264" -> args.addAll(List.of("-preset", "veryfast", "-tune", "zerolatency"));
+            case "mf" -> args.addAll(List.of("-hw_encoding", "1", "-rate_control", "pc_vbr", "-scenario", "display_remoting"));
+            case "vaapi" -> args.addAll(List.of("-rc_mode", "VBR"));
+            case "videotoolbox" -> args.addAll(List.of("-realtime", "1"));
+            case "libx264" -> args.addAll(List.of("-preset", "veryfast", "-tune", "zerolatency", "-crf", "23"));
             default -> {
             }
         }
-        args.addAll(List.of("-b:v", rate, "-maxrate", rate, "-bufsize", buffer, "-g", gop, "-bf", "0"));
+        // libx264's quality factor sets its rate itself, under the cap
+        if (!encoder.equals("libx264")) args.addAll(List.of("-b:v", average));
+        args.addAll(List.of("-maxrate", cap, "-bufsize", buffer, "-g", gop, "-bf", "0"));
         return args;
     }
 }

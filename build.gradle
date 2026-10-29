@@ -101,7 +101,8 @@ loom {
             name = 'Beam caster'
             source sourceSets.testmod
             runDir = "run/caster/${mc}"
-            if (quickPlay) programArgs '--quickPlayMultiplayer', '127.0.0.1:25700'
+            // -PtestServer=host:port, e.g. a relay in front of the test server
+            if (quickPlay) programArgs '--quickPlayMultiplayer', project.findProperty('testServer') ?: '127.0.0.1:25700'
             programArgs '--width', '1280', '--height', '720', '--username', 'Caster'
             // -PtestMode=cast: the dialog test on that server (e.g. one without Beam: "Stream to players" greyed out)
             vmArgs '-Xmx3G', "-Dddbeam.test.mode=${project.findProperty('testMode') ?: 'stream'}", '-Dddbeam.test.server=127.0.0.1:25700'
@@ -109,6 +110,7 @@ loom {
             ['testPrefix': 'prefix', 'testSource': 'source', 'testRes': 'res', 'testFps': 'fps', 'testVideo': 'video', 'testDepth': 'depth', 'testFacing': 'facing', 'testBottom': 'bottom'].each { prop, key ->
                 if (project.hasProperty(prop)) vmArg "-Dddbeam.test.${key}=${project.property(prop)}"
             }
+            if (project.hasProperty('noStreamGate')) vmArg '-Dddbeam.noStreamGate=true'
         }
         // a second player for the streaming test: joins the caster's world opened to LAN (port 25700)
         viewer {

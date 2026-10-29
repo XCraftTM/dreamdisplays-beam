@@ -155,6 +155,12 @@ public final class Casts {
         dropRemote(display);
     }
 
+    /** The server sent this player's delay probe back. */
+    public static void onProbe(byte[] data) {
+        LocalCast cast = local;
+        if (cast != null) cast.probe.answer(data);
+    }
+
     public static void onNotice(BeamPayloads.Notice notice) {
         LocalCast cast = local;
         if (cast != null && cast.display.equals(notice.display())) cast.onNotice(notice.key());

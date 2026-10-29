@@ -19,9 +19,11 @@ public final class BeamPayloads {
     public static final int MAX_FRAME_BYTES = 1 << 20;
 
     public static final String START = "start", STOP = "stop", FRAME = "frame", STREAM = "stream", AUDIO = "audio", NOTICE = "notice";
+    /** A caster's delay probe (8 bytes), which the server sends straight back: see DelayProbe. */
+    public static final String PROBE = "probe";
     /** Channels a client sends on, and the ones the server sends on. */
-    public static final String[] TO_SERVER = {START, STOP, FRAME, STREAM, AUDIO};
-    public static final String[] TO_CLIENT = {STOP, FRAME, STREAM, AUDIO, NOTICE};
+    public static final String[] TO_SERVER = {START, STOP, FRAME, STREAM, AUDIO, PROBE};
+    public static final String[] TO_CLIENT = {STOP, FRAME, STREAM, AUDIO, NOTICE, PROBE};
 
     private BeamPayloads() {
     }
