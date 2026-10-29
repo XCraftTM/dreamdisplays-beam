@@ -19,7 +19,6 @@ import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
@@ -44,11 +43,11 @@ public final class DdBeamClient implements ClientModInitializer {
         KeyMapping.Category category = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("ddbeam", "main"));
         openKey = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.ddbeam.menu", InputConstants.KEY_B, category));
 
-        ClientPlayNetworking.registerGlobalReceiver(BeamPayloads.Frame.TYPE, (payload, ctx) -> Casts.onFrame(payload));
-        ClientPlayNetworking.registerGlobalReceiver(BeamPayloads.Stream.TYPE, (payload, ctx) -> Casts.onStream(payload));
-        ClientPlayNetworking.registerGlobalReceiver(BeamPayloads.Audio.TYPE, (payload, ctx) -> Casts.onAudio(payload));
-        ClientPlayNetworking.registerGlobalReceiver(BeamPayloads.Stop.TYPE, (payload, ctx) -> Casts.onStop(payload.display()));
-        ClientPlayNetworking.registerGlobalReceiver(BeamPayloads.Notice.TYPE, (payload, ctx) -> Casts.onNotice(payload));
+        receive(BeamPayloads.FRAME, data -> Casts.onFrame(BeamPayloads.Frame.decode(data)));
+        receive(BeamPayloads.STREAM, data -> Casts.onStream(BeamPayloads.Stream.decode(data)));
+        receive(BeamPayloads.AUDIO, data -> Casts.onAudio(BeamPayloads.Audio.decode(data)));
+        receive(BeamPayloads.STOP, data -> Casts.onStop(BeamPayloads.Stop.decode(data).display()));
+        receive(BeamPayloads.NOTICE, data -> Casts.onNotice(BeamPayloads.Notice.decode(data)));
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(Casts::clear));
 
         ClientTickEvents.END_CLIENT_TICK.register(mc -> {
@@ -61,6 +60,16 @@ public final class DdBeamClient implements ClientModInitializer {
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> dispatcher.register(commands()));
         // the cameras take FFmpeg a moment to list: ask early
         Sources.refresh();
+    }
+
+    /** A broken packet from the server is ignored. */
+    private static void receive(String channel, java.util.function.Consumer<byte[]> handler) {
+        BeamClientNet.receive(channel, data -> {
+            try {
+                handler.accept(data);
+            } catch (IllegalArgumentException ignored) {
+            }
+        });
     }
 
     private static boolean openDialog(Minecraft mc) {
@@ -87,7 +96,7 @@ public final class DdBeamClient implements ClientModInitializer {
         BeamConfig config = BeamConfig.get();
         boolean audio = source.kind() == CaptureSource.Kind.CAMERA ? !"none".equalsIgnoreCase(config.cameraAudio) : config.systemAudio;
         Casts.start(target, new LocalCast.Settings(source, config.maxWidth, config.maxHeight, config.fps,
-                config.share && ClientPlayNetworking.canSend(BeamPayloads.Start.TYPE), audio || source.kind() == CaptureSource.Kind.TEST));
+                config.share && BeamClientNet.canSend(BeamPayloads.START), audio || source.kind() == CaptureSource.Kind.TEST));
         return 1;
     }
 

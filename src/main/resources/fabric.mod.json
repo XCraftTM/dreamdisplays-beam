@@ -12,6 +12,7 @@
     "client": ["dev.xcrafttm.ddbeam.client.DdBeamClient"]
   },
   "mixins": [{ "config": "ddbeam.mixins.json", "environment": "client" }],
+  ${accessWidener}
   "depends": {
     "fabricloader": ">=0.19.5",
     "minecraft": "${minecraft}",

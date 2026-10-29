@@ -12,7 +12,7 @@ import dev.xcrafttm.ddbeam.client.capture.FfmpegCapture;
 import dev.xcrafttm.ddbeam.client.capture.Sources;
 import dev.xcrafttm.ddbeam.client.capture.WaylandPortal;
 import dev.xcrafttm.ddbeam.net.BeamPayloads;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import dev.xcrafttm.ddbeam.client.BeamClientNet;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 
@@ -82,8 +82,8 @@ public final class LocalCast {
         starter.setDaemon(true);
         starter.start();
         Minecraft.getInstance().execute(() -> {
-            if (ClientPlayNetworking.canSend(BeamPayloads.Start.TYPE) && settings.share()) {
-                ClientPlayNetworking.send(new BeamPayloads.Start(display, width, height));
+            if (BeamClientNet.canSend(BeamPayloads.START) && settings.share()) {
+                BeamClientNet.send(BeamPayloads.START, new BeamPayloads.Start(display, width, height).encode());
             }
         });
     }
@@ -161,8 +161,8 @@ public final class LocalCast {
                 byte[] data = Adpcm.encode(packet);
                 int s = audioSeq++;
                 Minecraft.getInstance().execute(() -> {
-                    if (Casts.local() == this && ClientPlayNetworking.canSend(BeamPayloads.Audio.TYPE)) {
-                        ClientPlayNetworking.send(new BeamPayloads.Audio(display, NOBODY, s, data));
+                    if (Casts.local() == this && BeamClientNet.canSend(BeamPayloads.AUDIO)) {
+                        BeamClientNet.send(BeamPayloads.AUDIO, new BeamPayloads.Audio(display, NOBODY, s, data).encode());
                     }
                 });
             }
@@ -178,8 +178,8 @@ public final class LocalCast {
             byte[] piece = java.util.Arrays.copyOfRange(data, at, Math.min(data.length, at + BeamPayloads.MAX_PART));
             int s = seq++;
             Minecraft.getInstance().execute(() -> {
-                if (Casts.local() == this && ClientPlayNetworking.canSend(BeamPayloads.Stream.TYPE)) {
-                    ClientPlayNetworking.send(new BeamPayloads.Stream(display, NOBODY, s, width, height, piece));
+                if (Casts.local() == this && BeamClientNet.canSend(BeamPayloads.STREAM)) {
+                    BeamClientNet.send(BeamPayloads.STREAM, new BeamPayloads.Stream(display, NOBODY, s, width, height, piece).encode());
                 }
             });
         }
@@ -202,10 +202,10 @@ public final class LocalCast {
         int s = seq++;
         int parts = (jpeg.length + BeamPayloads.MAX_PART - 1) / BeamPayloads.MAX_PART;
         Minecraft.getInstance().execute(() -> {
-            if (Casts.local() != this || !ClientPlayNetworking.canSend(BeamPayloads.Frame.TYPE)) return;
+            if (Casts.local() != this || !BeamClientNet.canSend(BeamPayloads.FRAME)) return;
             for (int i = 0; i < parts; i++) {
                 byte[] part = java.util.Arrays.copyOfRange(jpeg, i * BeamPayloads.MAX_PART, Math.min(jpeg.length, (i + 1) * BeamPayloads.MAX_PART));
-                ClientPlayNetworking.send(new BeamPayloads.Frame(display, NOBODY, s, i, parts, part));
+                BeamClientNet.send(BeamPayloads.FRAME, new BeamPayloads.Frame(display, NOBODY, s, i, parts, part).encode());
             }
         });
     }
@@ -274,6 +274,6 @@ public final class LocalCast {
         if (a != null) a.close();
         if (localAudio != null) localAudio.close();
         feed.close();
-        if (ClientPlayNetworking.canSend(BeamPayloads.Stop.TYPE)) ClientPlayNetworking.send(new BeamPayloads.Stop(display));
+        if (BeamClientNet.canSend(BeamPayloads.STOP)) BeamClientNet.send(BeamPayloads.STOP, new BeamPayloads.Stop(display).encode());
     }
 }

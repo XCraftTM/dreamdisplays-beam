@@ -7,7 +7,7 @@ import dev.xcrafttm.ddbeam.client.cast.Casts;
 import dev.xcrafttm.ddbeam.client.cast.LocalCast;
 import dev.xcrafttm.ddbeam.client.cast.Targets;
 import dev.xcrafttm.ddbeam.net.BeamPayloads;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import dev.xcrafttm.ddbeam.client.BeamClientNet;
 import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
@@ -107,7 +107,7 @@ public final class BeamScreen extends Screen {
         k = guiScale / (float) Math.clamp(fit, 1, guiScale);
         vw = Math.round(width * k);
         vh = Math.round(height * k);
-        boolean serverRelays = ClientPlayNetworking.canSend(BeamPayloads.Start.TYPE);
+        boolean serverRelays = BeamClientNet.canSend(BeamPayloads.START);
         Component resLabel = Component.translatable("ddbeam.dialog.resolution");
         Component fpsLabel = Component.translatable("ddbeam.dialog.fps");
         Component shareLabel = Component.translatable("ddbeam.dialog.share");
@@ -295,7 +295,7 @@ public final class BeamScreen extends Screen {
         if (live()) {
             g.text(font, Component.translatable("ddbeam.dialog.live"), PAD, footerY, LIVE, false);
         } else {
-            boolean serverRelays = ClientPlayNetworking.canSend(BeamPayloads.Start.TYPE);
+            boolean serverRelays = BeamClientNet.canSend(BeamPayloads.START);
             Component who = Component.translatable(!serverRelays ? "ddbeam.dialog.who.local"
                     : share ? "ddbeam.dialog.who.everyone" : "ddbeam.dialog.who.you");
             int room = footerTextRight - PAD;
@@ -469,7 +469,7 @@ public final class BeamScreen extends Screen {
         }
         BeamConfig.save();
         Casts.start(target, new LocalCast.Settings(selected, res[0], res[1], config.fps,
-                share && ClientPlayNetworking.canSend(BeamPayloads.Start.TYPE), audio));
+                share && BeamClientNet.canSend(BeamPayloads.START), audio));
         minecraft.setScreenAndShow(null);
     }
 }

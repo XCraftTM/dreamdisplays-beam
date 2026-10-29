@@ -6,8 +6,8 @@ import dev.xcrafttm.ddbeam.DdBeam;
 import dev.xcrafttm.ddbeam.net.BeamPayloads;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import dev.xcrafttm.ddbeam.net.BeamNet;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
-import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -21,8 +21,7 @@ import java.util.UUID;
 
 /**
  * Passes casts on to the players near the display. The server never decodes a frame: it checks who may cast, limits
- * the rate and forwards the JPEG bytes as they came. All of it runs on the server thread (Fabric runs play payload
- * handlers there).
+ * the rate and forwards the data as it came. All of it runs on the server thread.
  */
 public final class CastRelay {
     /** A cast whose caster sent nothing for this long is over (the caster's game stopped, or it lost the cast). */
@@ -58,14 +57,14 @@ public final class CastRelay {
     }
 
     public static void register() {
-        ServerPlayNetworking.registerGlobalReceiver(BeamPayloads.Start.TYPE, (payload, ctx) -> start(ctx.server(), ctx.player(), payload));
-        ServerPlayNetworking.registerGlobalReceiver(BeamPayloads.Stop.TYPE, (payload, ctx) -> {
-            Session session = SESSIONS.get(payload.display());
-            if (session != null && session.caster.equals(ctx.player().getUUID())) end(ctx.server(), session);
-        });
-        ServerPlayNetworking.registerGlobalReceiver(BeamPayloads.Frame.TYPE, (payload, ctx) -> frame(ctx.server(), ctx.player(), payload));
-        ServerPlayNetworking.registerGlobalReceiver(BeamPayloads.Stream.TYPE, (payload, ctx) -> stream(ctx.server(), ctx.player(), payload));
-        ServerPlayNetworking.registerGlobalReceiver(BeamPayloads.Audio.TYPE, (payload, ctx) -> audio(ctx.server(), ctx.player(), payload));
+        BeamNet.receive(BeamPayloads.START, safe((player, data) -> start(serverOf(player), player, BeamPayloads.Start.decode(data))));
+        BeamNet.receive(BeamPayloads.STOP, safe((player, data) -> {
+            Session session = SESSIONS.get(BeamPayloads.Stop.decode(data).display());
+            if (session != null && session.caster.equals(player.getUUID())) end(serverOf(player), session);
+        }));
+        BeamNet.receive(BeamPayloads.FRAME, safe((player, data) -> frame(serverOf(player), player, BeamPayloads.Frame.decode(data))));
+        BeamNet.receive(BeamPayloads.STREAM, safe((player, data) -> stream(serverOf(player), player, BeamPayloads.Stream.decode(data))));
+        BeamNet.receive(BeamPayloads.AUDIO, safe((player, data) -> audio(serverOf(player), player, BeamPayloads.Audio.decode(data))));
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> server.execute(() -> {
             UUID player = handler.player.getUUID();
             for (Session session : sessions()) if (session.caster.equals(player)) end(server, session);
@@ -78,14 +77,34 @@ public final class CastRelay {
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> SESSIONS.clear());
     }
 
+    /** A broken packet from a client is ignored. */
+    private static BeamNet.ServerHandler safe(BeamNet.ServerHandler handler) {
+        return (player, data) -> {
+            try {
+                handler.handle(player, data);
+            } catch (IllegalArgumentException ignored) {
+            }
+        };
+    }
+
+    private static MinecraftServer serverOf(ServerPlayer player) {
+        //#if MC >= 1.21.9
+        return player.level().getServer();
+        //#else
+        return player.getServer();
+        //#endif
+    }
+
+    private static void send(ServerPlayer player, String channel, byte[] data) {
+        if (BeamNet.canSend(player, channel)) BeamNet.send(player, channel, data);
+    }
+
     private static Session[] sessions() {
         return SESSIONS.values().toArray(new Session[0]);
     }
 
     private static void notice(ServerPlayer player, UUID display, String key) {
-        if (ServerPlayNetworking.canSend(player, BeamPayloads.Notice.TYPE)) {
-            ServerPlayNetworking.send(player, new BeamPayloads.Notice(display, key));
-        }
+        send(player, BeamPayloads.NOTICE, new BeamPayloads.Notice(display, key).encode());
     }
 
     private static void start(MinecraftServer server, ServerPlayer player, BeamPayloads.Start payload) {
@@ -126,7 +145,12 @@ public final class CastRelay {
     }
 
     private static boolean mayCast(MinecraftServer server, ServerPlayer player, ServerDisplay display) {
-        boolean op = server.getPlayerList().isOp(player.nameAndId()) || server.isSingleplayerOwner(player.nameAndId());
+        //#if MC >= 1.21.9
+        var profile = player.nameAndId();
+        //#else
+        var profile = player.getGameProfile();
+        //#endif
+        boolean op = server.getPlayerList().isOp(profile) || server.isSingleplayerOwner(profile);
         return switch (ServerConfig.get().whoCanCast) {
             case "everyone" -> true;
             case "operators" -> op;
@@ -155,8 +179,8 @@ public final class CastRelay {
         } else if (payload.seq() != session.keepSeq) {
             return;
         }
-        deliver(server, player, session, new BeamPayloads.Frame(session.display, session.caster, payload.seq(), payload.part(),
-                payload.parts(), payload.data()), BeamPayloads.Frame.TYPE);
+        deliver(server, player, session, BeamPayloads.FRAME, new BeamPayloads.Frame(session.display, session.caster, payload.seq(),
+                payload.part(), payload.parts(), payload.data()).encode());
     }
 
     /**
@@ -178,14 +202,12 @@ public final class CastRelay {
             return;
         }
         session.budget -= payload.data().length;
-        deliver(server, player, session, new BeamPayloads.Stream(session.display, session.caster, payload.seq(), payload.width(),
-                payload.height(), payload.data()), BeamPayloads.Stream.TYPE);
+        deliver(server, player, session, BeamPayloads.STREAM, new BeamPayloads.Stream(session.display, session.caster, payload.seq(),
+                payload.width(), payload.height(), payload.data()).encode());
     }
 
     /** Sends to the players near the display, and tells those who left its range that the cast is gone for them. */
-    private static void deliver(MinecraftServer server, ServerPlayer caster, Session session,
-                                net.minecraft.network.protocol.common.custom.CustomPacketPayload out,
-                                net.minecraft.network.protocol.common.custom.CustomPacketPayload.Type<?> type) {
+    private static void deliver(MinecraftServer server, ServerPlayer caster, Session session, String channel, byte[] out) {
         ServerConfig config = ServerConfig.get();
         Set<UUID> reached = new HashSet<>();
         ServerLevel level = levelOf(server, session.world);
@@ -193,8 +215,8 @@ public final class CastRelay {
             double range2 = config.viewDistance * config.viewDistance;
             for (ServerPlayer viewer : level.players()) {
                 if (viewer == caster || viewer.distanceToSqr(session.x, session.y, session.z) > range2) continue;
-                if (!ServerPlayNetworking.canSend(viewer, type)) continue;
-                ServerPlayNetworking.send(viewer, out);
+                if (!BeamNet.canSend(viewer, channel)) continue;
+                BeamNet.send(viewer, channel, out);
                 reached.add(viewer.getUUID());
             }
         }
@@ -215,25 +237,28 @@ public final class CastRelay {
         // about 25 packets a second are sent; more is not audio
         if (now - session.lastAudioNs < 10_000_000L) return;
         session.lastAudioNs = now;
-        BeamPayloads.Audio out = new BeamPayloads.Audio(session.display, session.caster, payload.seq(), payload.data());
+        byte[] out = new BeamPayloads.Audio(session.display, session.caster, payload.seq(), payload.data()).encode();
         for (UUID id : session.viewers) {
             ServerPlayer viewer = server.getPlayerList().getPlayer(id);
-            if (viewer != null && ServerPlayNetworking.canSend(viewer, BeamPayloads.Audio.TYPE)) ServerPlayNetworking.send(viewer, out);
+            if (viewer != null) send(viewer, BeamPayloads.AUDIO, out);
         }
     }
 
     private static ServerLevel levelOf(MinecraftServer server, String world) {
         for (ServerLevel level : server.getAllLevels()) {
-            if (level.dimension().identifier().toString().equals(world)) return level;
+            //#if MC >= 1.21.11
+            var id = level.dimension().identifier();
+            //#else
+            var id = level.dimension().location();
+            //#endif
+            if (id.toString().equals(world)) return level;
         }
         return null;
     }
 
     private static void sendStop(MinecraftServer server, UUID viewer, UUID display) {
         ServerPlayer player = server.getPlayerList().getPlayer(viewer);
-        if (player != null && ServerPlayNetworking.canSend(player, BeamPayloads.Stop.TYPE)) {
-            ServerPlayNetworking.send(player, new BeamPayloads.Stop(display));
-        }
+        if (player != null) send(player, BeamPayloads.STOP, new BeamPayloads.Stop(display).encode());
     }
 
     private static void end(MinecraftServer server, Session session) {

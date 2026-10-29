@@ -1,6 +1,6 @@
 package dev.xcrafttm.ddbeam;
 
-import dev.xcrafttm.ddbeam.net.BeamPayloads;
+import dev.xcrafttm.ddbeam.net.BeamNet;
 import dev.xcrafttm.ddbeam.server.CastRelay;
 import dev.xcrafttm.ddbeam.server.ServerConfig;
 import net.fabricmc.api.ModInitializer;
@@ -14,7 +14,7 @@ public final class DdBeam implements ModInitializer {
     @Override
     public void onInitialize() {
         ServerConfig.load();
-        BeamPayloads.register();
+        BeamNet.registerTypes();
         CastRelay.register();
     }
 }

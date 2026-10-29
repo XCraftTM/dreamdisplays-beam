@@ -1,37 +1,28 @@
 package dev.xcrafttm.ddbeam.client.audio;
 
+import com.sun.jna.Callback;
+import com.sun.jna.CallbackReference;
+import com.sun.jna.Function;
+import com.sun.jna.Memory;
+import com.sun.jna.Native;
+import com.sun.jna.NativeLibrary;
+import com.sun.jna.Pointer;
 import dev.xcrafttm.ddbeam.DdBeam;
 
-import java.lang.foreign.Arena;
-import java.lang.foreign.FunctionDescriptor;
-import java.lang.foreign.Linker;
-import java.lang.foreign.MemorySegment;
-import java.lang.foreign.SymbolLookup;
-import java.lang.invoke.MethodHandle;
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.MethodType;
-import java.nio.charset.StandardCharsets;
-import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
-import static java.lang.foreign.ValueLayout.ADDRESS;
-import static java.lang.foreign.ValueLayout.JAVA_INT;
-import static java.lang.foreign.ValueLayout.JAVA_LONG;
-import static java.lang.foreign.ValueLayout.JAVA_SHORT;
-
 /**
- * What Windows plays, captured with WASAPI loopback through Java's foreign function API (no native library).
+ * What Windows plays, captured with WASAPI loopback through JNA (which every Minecraft version ships).
  * <p>
- * First choice is process loopback (Windows 10 2004+) that leaves out this game's own process tree: the other
- * players hear the desktop, not the caster's game sounds or the casts it plays. Older Windows: the plain loopback
- * of the default output device, which includes the game.
+ * First choice is process loopback (Windows 10 2004+) that leaves out this game's own process tree (or, for a
+ * window cast, takes only that application's tree): the other players hear the desktop, not the caster's game
+ * sounds or the casts it plays. Older Windows: the plain loopback of the default output device, which includes the
+ * game.
  */
 public final class WasapiLoopback implements AudioCapture {
-    private static final Linker LINKER = Linker.nativeLinker();
-
     private static final String CLSID_MM_DEVICE_ENUMERATOR = "BCDE0395-E52F-467C-8E3D-C4579291692E";
     private static final String IID_MM_DEVICE_ENUMERATOR = "A95664D2-9614-4F35-A746-DE8DB63617E6";
     private static final String IID_AUDIO_CLIENT = "1CB9AD4C-DBFA-4C32-B178-C2F568A703B2";
@@ -47,18 +38,42 @@ public final class WasapiLoopback implements AudioCapture {
     // IAudioCaptureClient
     private static final int CC_GET_BUFFER = 3, CC_RELEASE_BUFFER = 4, CC_NEXT_PACKET = 5;
 
-    private static volatile CompletableFuture<MemorySegment> activation;
-    private static MemorySegment completionHandler;
+    private static volatile CompletableFuture<Pointer> activation;
+
+    // the completion handler of ActivateAudioInterfaceAsync: a COM object made of callbacks, kept alive here
+    private interface QueryInterface extends Callback {
+        int invoke(Pointer self, Pointer riid, Pointer ppv);
+    }
+
+    private interface AddRef extends Callback {
+        int invoke(Pointer self);
+    }
+
+    private interface ActivateCompleted extends Callback {
+        int invoke(Pointer self, Pointer operation);
+    }
+
+    private static final QueryInterface QI = (self, riid, ppv) -> {
+        // IUnknown, IAgileObject and IActivateAudioInterfaceCompletionHandler are all this one object
+        ppv.setPointer(0, self);
+        return 0;
+    };
+    private static final AddRef REF = self -> 1;
+    private static final ActivateCompleted DONE = (self, operation) -> {
+        CompletableFuture<Pointer> pending = activation;
+        if (pending != null) pending.complete(operation);
+        return 0;
+    };
+    private static Memory handlerVtbl, handler;
 
     private final Consumer<short[]> sink;
     private final Consumer<String> onError;
-    private volatile boolean closed;
-    /** "process" when the game is left out, "device" for the plain loopback. */
-    private volatile String mode = "";
-
     /** Process loopback target: this game (left out), or an application's process (only it is heard). */
     private final long pid;
     private final boolean include;
+    private volatile boolean closed;
+    /** "process" when the game is left out, "device" for the plain loopback. */
+    private volatile String mode = "";
 
     private WasapiLoopback(Consumer<short[]> sink, Consumer<String> onError, long pid, boolean include) {
         this.sink = sink;
@@ -100,127 +115,91 @@ public final class WasapiLoopback implements AudioCapture {
 
     // ---- native helpers ----
 
-    private static SymbolLookup lib(String name) {
-        return SymbolLookup.libraryLookup(name, Arena.global());
+    private static Function fn(String lib, String name) {
+        return NativeLibrary.getInstance(lib).getFunction(name);
     }
 
-    private static MethodHandle fn(SymbolLookup lib, String name, FunctionDescriptor fd) {
-        return LINKER.downcallHandle(lib.find(name).orElseThrow(() -> new IllegalStateException("no " + name)), fd);
-    }
-
-    private static MemorySegment guid(Arena arena, String text) {
+    private static Memory guid(String text) {
         String[] p = text.split("-");
-        MemorySegment g = arena.allocate(16);
-        g.set(JAVA_INT, 0, Integer.parseUnsignedInt(p[0], 16));
-        g.set(JAVA_SHORT, 4, (short) Integer.parseInt(p[1], 16));
-        g.set(JAVA_SHORT, 6, (short) Integer.parseInt(p[2], 16));
+        Memory g = new Memory(16);
+        g.setInt(0, Integer.parseUnsignedInt(p[0], 16));
+        g.setShort(4, (short) Integer.parseInt(p[1], 16));
+        g.setShort(6, (short) Integer.parseInt(p[2], 16));
         String rest = p[3] + p[4];
-        for (int i = 0; i < 8; i++) g.set(java.lang.foreign.ValueLayout.JAVA_BYTE, 8 + i, (byte) Integer.parseInt(rest.substring(2 * i, 2 * i + 2), 16));
+        for (int i = 0; i < 8; i++) g.setByte(8 + i, (byte) Integer.parseInt(rest.substring(2 * i, 2 * i + 2), 16));
         return g;
     }
 
-    /** Calls method {@code index} of a COM object's vtable. */
-    private static Object com(MemorySegment obj, int index, FunctionDescriptor fd, Object... args) throws Throwable {
-        MemorySegment vtbl = obj.reinterpret(8).get(ADDRESS, 0).reinterpret(8L * 32);
-        MethodHandle mh = LINKER.downcallHandle(vtbl.getAtIndex(ADDRESS, index), fd);
+    /** Method {@code index} of a COM object's vtable. */
+    private static Function method(Pointer obj, int index) {
+        Pointer vtbl = obj.getPointer(0);
+        return Function.getFunction(vtbl.getPointer((long) index * Native.POINTER_SIZE));
+    }
+
+    private static int com(Pointer obj, int index, Object... args) {
         Object[] all = new Object[args.length + 1];
         all[0] = obj;
         System.arraycopy(args, 0, all, 1, args.length);
-        return mh.invokeWithArguments(all);
+        return method(obj, index).invokeInt(all);
     }
 
-    private static int hr(Object result) {
-        return (Integer) result;
-    }
-
-    private static void release(MemorySegment obj) {
-        if (obj == null || obj.address() == 0) return;
+    private static void release(Pointer obj) {
+        if (obj == null) return;
         try {
-            com(obj, 2, FunctionDescriptor.of(JAVA_INT, ADDRESS));
-        } catch (Throwable ignored) {
+            com(obj, 2);
+        } catch (RuntimeException ignored) {
         }
     }
 
-    private static MemorySegment out(Arena arena) {
-        MemorySegment p = arena.allocate(ADDRESS);
-        p.set(ADDRESS, 0, MemorySegment.NULL);
+    private static Memory out() {
+        Memory p = new Memory(Native.POINTER_SIZE);
+        p.setPointer(0, null);
         return p;
     }
 
-    // ---- the completion handler of ActivateAudioInterfaceAsync, a COM object made of upcalls ----
-
-    @SuppressWarnings("unused")
-    private static int qi(MemorySegment self, MemorySegment riid, MemorySegment ppv) {
-        // IUnknown, IAgileObject and IActivateAudioInterfaceCompletionHandler are all this one object
-        ppv.reinterpret(8).set(ADDRESS, 0, self);
-        return 0;
-    }
-
-    @SuppressWarnings("unused")
-    private static int addRef(MemorySegment self) {
-        return 1;
-    }
-
-    @SuppressWarnings("unused")
-    private static int activateCompleted(MemorySegment self, MemorySegment operation) {
-        CompletableFuture<MemorySegment> pending = activation;
-        if (pending != null) pending.complete(operation);
-        return 0;
-    }
-
-    private static synchronized MemorySegment completionHandler() throws ReflectiveOperationException {
-        if (completionHandler != null) return completionHandler;
-        Arena global = Arena.global();
-        MethodHandles.Lookup lookup = MethodHandles.lookup();
-        MemorySegment qi = LINKER.upcallStub(lookup.findStatic(WasapiLoopback.class, "qi",
-                        MethodType.methodType(int.class, MemorySegment.class, MemorySegment.class, MemorySegment.class)),
-                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS), global);
-        MemorySegment ref = LINKER.upcallStub(lookup.findStatic(WasapiLoopback.class, "addRef",
-                MethodType.methodType(int.class, MemorySegment.class)), FunctionDescriptor.of(JAVA_INT, ADDRESS), global);
-        MemorySegment done = LINKER.upcallStub(lookup.findStatic(WasapiLoopback.class, "activateCompleted",
-                        MethodType.methodType(int.class, MemorySegment.class, MemorySegment.class)),
-                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS), global);
-        MemorySegment vtbl = global.allocate(ADDRESS, 4);
-        vtbl.setAtIndex(ADDRESS, 0, qi);
-        vtbl.setAtIndex(ADDRESS, 1, ref);
-        vtbl.setAtIndex(ADDRESS, 2, ref);
-        vtbl.setAtIndex(ADDRESS, 3, done);
-        MemorySegment obj = global.allocate(ADDRESS);
-        obj.set(ADDRESS, 0, vtbl);
-        completionHandler = obj;
-        return obj;
+    private static synchronized Pointer completionHandler() {
+        if (handler != null) return handler;
+        handlerVtbl = new Memory(4L * Native.POINTER_SIZE);
+        handlerVtbl.setPointer(0, CallbackReference.getFunctionPointer(QI));
+        handlerVtbl.setPointer(Native.POINTER_SIZE, CallbackReference.getFunctionPointer(REF));
+        handlerVtbl.setPointer(2L * Native.POINTER_SIZE, CallbackReference.getFunctionPointer(REF));
+        handlerVtbl.setPointer(3L * Native.POINTER_SIZE, CallbackReference.getFunctionPointer(DONE));
+        handler = new Memory(Native.POINTER_SIZE);
+        handler.setPointer(0, handlerVtbl);
+        return handler;
     }
 
     /** IAudioClient for one process tree (included or left out), or null on older Windows. */
-    private static MemorySegment processLoopback(Arena arena, long pid, boolean include) {
+    private static Pointer processLoopback(long pid, boolean include) {
         try {
-            MethodHandle activate = fn(lib("Mmdevapi"), "ActivateAudioInterfaceAsync",
-                    FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
+            Function activate = fn("Mmdevapi", "ActivateAudioInterfaceAsync");
             // AUDIOCLIENT_ACTIVATION_PARAMS: PROCESS_LOOPBACK, the pid, INCLUDE (0) / EXCLUDE (1) _TARGET_PROCESS_TREE
-            MemorySegment params = arena.allocate(12);
-            params.set(JAVA_INT, 0, 1);
-            params.set(JAVA_INT, 4, (int) pid);
-            params.set(JAVA_INT, 8, include ? 0 : 1);
+            Memory params = new Memory(12);
+            params.setInt(0, 1);
+            params.setInt(4, (int) pid);
+            params.setInt(8, include ? 0 : 1);
             // PROPVARIANT holding a VT_BLOB of those
-            MemorySegment prop = arena.allocate(24);
-            prop.set(JAVA_SHORT, 0, (short) 65);
-            prop.set(JAVA_INT, 8, 12);
-            prop.set(ADDRESS, 16, params);
-            MemorySegment op = out(arena);
-            CompletableFuture<MemorySegment> pending = new CompletableFuture<>();
+            Memory prop = new Memory(24);
+            prop.clear();
+            prop.setShort(0, (short) 65);
+            prop.setInt(8, 12);
+            prop.setPointer(16, params);
+            Memory path = new Memory(("VAD\\Process_Loopback".length() + 1) * 2L);
+            path.setWideString(0, "VAD\\Process_Loopback");
+            Memory op = out();
+            CompletableFuture<Pointer> pending = new CompletableFuture<>();
             synchronized (WasapiLoopback.class) {
                 activation = pending;
-                int hr = (int) activate.invokeWithArguments(arena.allocateFrom("VAD\\Process_Loopback", StandardCharsets.UTF_16LE),
-                        guid(arena, IID_AUDIO_CLIENT), prop, completionHandler(), op);
+                int hr = activate.invokeInt(new Object[]{path, guid(IID_AUDIO_CLIENT), prop, completionHandler(), op});
                 if (hr < 0) throw new IllegalStateException("ActivateAudioInterfaceAsync 0x" + Integer.toHexString(hr));
-                MemorySegment operation = pending.get(5, TimeUnit.SECONDS);
+                Pointer operation = pending.get(5, TimeUnit.SECONDS);
                 activation = null;
-                MemorySegment result = arena.allocate(JAVA_INT);
-                MemorySegment unknown = out(arena);
-                com(operation, 3, FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS), result, unknown);
-                release(op.get(ADDRESS, 0));
-                if (result.get(JAVA_INT, 0) < 0) throw new IllegalStateException("activation 0x" + Integer.toHexString(result.get(JAVA_INT, 0)));
-                return unknown.get(ADDRESS, 0);
+                Memory result = new Memory(4);
+                Memory unknown = out();
+                com(operation, 3, result, unknown);
+                release(op.getPointer(0));
+                if (result.getInt(0) < 0) throw new IllegalStateException("activation 0x" + Integer.toHexString(result.getInt(0)));
+                return unknown.getPointer(0);
             }
         } catch (Throwable e) {
             activation = null;
@@ -230,64 +209,48 @@ public final class WasapiLoopback implements AudioCapture {
     }
 
     /** IAudioClient of the default output device (plain loopback, includes the game). */
-    private static MemorySegment deviceLoopback(Arena arena, MethodHandle coCreate) throws Throwable {
-        MemorySegment enumerator = out(arena);
-        int hr = (int) coCreate.invokeWithArguments(guid(arena, CLSID_MM_DEVICE_ENUMERATOR), MemorySegment.NULL, CLSCTX_ALL,
-                guid(arena, IID_MM_DEVICE_ENUMERATOR), enumerator);
+    private static Pointer deviceLoopback() {
+        Memory enumerator = out();
+        int hr = fn("ole32", "CoCreateInstance").invokeInt(new Object[]{guid(CLSID_MM_DEVICE_ENUMERATOR), null, CLSCTX_ALL,
+                guid(IID_MM_DEVICE_ENUMERATOR), enumerator});
         if (hr < 0) throw new IllegalStateException("CoCreateInstance 0x" + Integer.toHexString(hr));
-        MemorySegment device = out(arena);
-        hr = hr(com(enumerator.get(ADDRESS, 0), 4, FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, JAVA_INT, ADDRESS), 0, 0, device));
-        release(enumerator.get(ADDRESS, 0));
+        Memory device = out();
+        hr = com(enumerator.getPointer(0), 4, 0, 0, device);
+        release(enumerator.getPointer(0));
         if (hr < 0) throw new IllegalStateException("GetDefaultAudioEndpoint 0x" + Integer.toHexString(hr));
-        MemorySegment client = out(arena);
-        hr = hr(com(device.get(ADDRESS, 0), 3, FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, ADDRESS, ADDRESS),
-                guid(arena, IID_AUDIO_CLIENT), CLSCTX_ALL, MemorySegment.NULL, client));
-        release(device.get(ADDRESS, 0));
+        Memory client = out();
+        hr = com(device.getPointer(0), 3, guid(IID_AUDIO_CLIENT), CLSCTX_ALL, null, client);
+        release(device.getPointer(0));
         if (hr < 0) throw new IllegalStateException("IMMDevice.Activate 0x" + Integer.toHexString(hr));
-        return client.get(ADDRESS, 0);
+        return client.getPointer(0);
     }
 
     /** 48 kHz, stereo, 16 bit PCM (WAVEFORMATEX). */
-    private static MemorySegment format(Arena arena) {
-        MemorySegment f = arena.allocate(20);
-        f.set(JAVA_SHORT, 0, (short) 1);
-        f.set(JAVA_SHORT, 2, (short) 2);
-        f.set(JAVA_INT, 4, RATE);
-        f.set(JAVA_INT, 8, RATE * 4);
-        f.set(JAVA_SHORT, 12, (short) 4);
-        f.set(JAVA_SHORT, 14, (short) 16);
-        f.set(JAVA_SHORT, 16, (short) 0);
+    private static Memory format() {
+        Memory f = new Memory(20);
+        f.clear();
+        f.setShort(0, (short) 1);
+        f.setShort(2, (short) 2);
+        f.setInt(4, RATE);
+        f.setInt(8, RATE * 4);
+        f.setShort(12, (short) 4);
+        f.setShort(14, (short) 16);
         return f;
     }
 
     private void run() {
-        SymbolLookup ole32, kernel32;
+        Pointer client = null, capture = null, event = null;
+        boolean comStarted = false;
         try {
-            ole32 = lib("ole32");
-            kernel32 = lib("kernel32");
-        } catch (RuntimeException e) {
-            onError.accept(e.toString());
-            return;
-        }
-        MemorySegment client = null, capture = null, event = MemorySegment.NULL;
-        MethodHandle closeHandle = null, coUninit = null;
-        try (Arena arena = Arena.ofConfined()) {
-            MethodHandle coInit = fn(ole32, "CoInitializeEx", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT));
-            coUninit = fn(ole32, "CoUninitialize", FunctionDescriptor.ofVoid());
-            MethodHandle coCreate = fn(ole32, "CoCreateInstance", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, ADDRESS, ADDRESS));
-            MethodHandle createEvent = fn(kernel32, "CreateEventW", FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, ADDRESS));
-            MethodHandle wait = fn(kernel32, "WaitForSingleObject", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT));
-            closeHandle = fn(kernel32, "CloseHandle", FunctionDescriptor.of(JAVA_INT, ADDRESS));
-            coInit.invokeWithArguments(MemorySegment.NULL, 0);
-
-            FunctionDescriptor init = FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, JAVA_INT, JAVA_LONG, JAVA_LONG, ADDRESS, ADDRESS);
-            MemorySegment fmt = format(arena);
+            fn("ole32", "CoInitializeEx").invokeInt(new Object[]{null, 0});
+            comStarted = true;
+            Memory fmt = format();
             int channels = 2, bits = 16;
             boolean isFloat = false;
-            client = processLoopback(arena, pid, include);
+            client = processLoopback(pid, include);
             int hr = -1;
             if (client != null) {
-                hr = hr(com(client, AC_INITIALIZE, init, 0, STREAMFLAGS, 2_000_000L, 0L, fmt, MemorySegment.NULL));
+                hr = com(client, AC_INITIALIZE, 0, STREAMFLAGS, 2_000_000L, 0L, fmt, null);
                 if (hr < 0) {
                     DdBeam.LOGGER.info("Process loopback failed to start (0x{}); capturing the whole output device", Integer.toHexString(hr));
                     release(client);
@@ -298,69 +261,66 @@ public final class WasapiLoopback implements AudioCapture {
             }
             if (client == null && include) throw new IllegalStateException("application audio needs Windows 10 2004 or newer");
             if (client == null) {
-                client = deviceLoopback(arena, coCreate);
-                hr = hr(com(client, AC_INITIALIZE, init, 0, STREAMFLAGS, 2_000_000L, 0L, fmt, MemorySegment.NULL));
+                client = deviceLoopback();
+                hr = com(client, AC_INITIALIZE, 0, STREAMFLAGS, 2_000_000L, 0L, fmt, null);
                 if (hr < 0) {
                     // no format conversion here: take the device's own mix format
-                    MemorySegment mixOut = out(arena);
-                    com(client, AC_GET_MIX_FORMAT, FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS), mixOut);
-                    MemorySegment mix = mixOut.get(ADDRESS, 0).reinterpret(40);
-                    channels = mix.get(JAVA_SHORT, 2);
-                    bits = mix.get(JAVA_SHORT, 14);
-                    int tag = mix.get(JAVA_SHORT, 0) & 0xFFFF;
+                    Memory mixOut = out();
+                    com(client, AC_GET_MIX_FORMAT, mixOut);
+                    Pointer mix = mixOut.getPointer(0);
+                    channels = mix.getShort(2);
+                    bits = mix.getShort(14);
+                    int tag = mix.getShort(0) & 0xFFFF;
                     isFloat = tag == 3 || (tag == 0xFFFE && bits == 32);
-                    if (mix.get(JAVA_INT, 4) != RATE) throw new IllegalStateException("device rate " + mix.get(JAVA_INT, 4) + " Hz");
-                    hr = hr(com(client, AC_INITIALIZE, init, 0, STREAMFLAGS & ~0x88000000, 2_000_000L, 0L, mix, MemorySegment.NULL));
+                    if (mix.getInt(4) != RATE) throw new IllegalStateException("device rate " + mix.getInt(4) + " Hz");
+                    hr = com(client, AC_INITIALIZE, 0, STREAMFLAGS & ~0x88000000, 2_000_000L, 0L, mix, null);
                 }
                 if (hr < 0) throw new IllegalStateException("IAudioClient.Initialize 0x" + Integer.toHexString(hr));
                 mode = "device";
             }
-            event = (MemorySegment) createEvent.invokeWithArguments(MemorySegment.NULL, 0, 0, MemorySegment.NULL);
-            com(client, AC_SET_EVENT, FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS), event);
-            MemorySegment captureOut = out(arena);
-            hr = hr(com(client, AC_GET_SERVICE, FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS),
-                    guid(arena, IID_AUDIO_CAPTURE_CLIENT), captureOut));
+            event = fn("kernel32", "CreateEventW").invokePointer(new Object[]{null, 0, 0, null});
+            com(client, AC_SET_EVENT, event);
+            Memory captureOut = out();
+            hr = com(client, AC_GET_SERVICE, guid(IID_AUDIO_CAPTURE_CLIENT), captureOut);
             if (hr < 0) throw new IllegalStateException("GetService 0x" + Integer.toHexString(hr));
-            capture = captureOut.get(ADDRESS, 0);
-            hr = hr(com(client, AC_START, FunctionDescriptor.of(JAVA_INT, ADDRESS)));
+            capture = captureOut.getPointer(0);
+            hr = com(client, AC_START);
             if (hr < 0) throw new IllegalStateException("Start 0x" + Integer.toHexString(hr));
             DdBeam.LOGGER.info("Capturing system audio ({} loopback)", mode);
 
-            MemorySegment vtbl = capture.reinterpret(8).get(ADDRESS, 0).reinterpret(8L * 8);
-            MethodHandle nextPacket = LINKER.downcallHandle(vtbl.getAtIndex(ADDRESS, CC_NEXT_PACKET), FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
-            MethodHandle getBuffer = LINKER.downcallHandle(vtbl.getAtIndex(ADDRESS, CC_GET_BUFFER),
-                    FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
-            MethodHandle releaseBuffer = LINKER.downcallHandle(vtbl.getAtIndex(ADDRESS, CC_RELEASE_BUFFER), FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT));
-            MemorySegment packet = arena.allocate(JAVA_INT), data = out(arena), frames = arena.allocate(JAVA_INT), flags = arena.allocate(JAVA_INT);
+            Function wait = fn("kernel32", "WaitForSingleObject");
+            Function nextPacket = method(capture, CC_NEXT_PACKET), getBuffer = method(capture, CC_GET_BUFFER),
+                    releaseBuffer = method(capture, CC_RELEASE_BUFFER);
+            Memory packet = new Memory(4), data = out(), frames = new Memory(4), flags = new Memory(4);
             int frameBytes = channels * bits / 8;
             while (!closed) {
-                wait.invokeWithArguments(event, 20);
+                wait.invokeInt(new Object[]{event, 20});
                 while (!closed) {
-                    if ((int) nextPacket.invokeWithArguments(capture, packet) < 0) throw new IllegalStateException("capture lost");
-                    if (packet.get(JAVA_INT, 0) == 0) break;
-                    if ((int) getBuffer.invokeWithArguments(capture, data, frames, flags, MemorySegment.NULL, MemorySegment.NULL) < 0) break;
-                    int n = frames.get(JAVA_INT, 0);
+                    if (nextPacket.invokeInt(new Object[]{capture, packet}) < 0) throw new IllegalStateException("capture lost");
+                    if (packet.getInt(0) == 0) break;
+                    if (getBuffer.invokeInt(new Object[]{capture, data, frames, flags, null, null}) < 0) break;
+                    int n = frames.getInt(0);
                     short[] mono = new short[n];
-                    if ((flags.get(JAVA_INT, 0) & BUFFER_FLAG_SILENT) == 0 && n > 0) {
-                        MemorySegment pcm = data.get(ADDRESS, 0).reinterpret((long) n * frameBytes);
+                    if ((flags.getInt(0) & BUFFER_FLAG_SILENT) == 0 && n > 0) {
+                        Pointer pcm = data.getPointer(0);
                         for (int i = 0; i < n; i++) {
                             long at = (long) i * frameBytes;
                             float l, r;
                             if (isFloat) {
-                                l = pcm.get(java.lang.foreign.ValueLayout.JAVA_FLOAT_UNALIGNED, at) * 32767f;
-                                r = channels > 1 ? pcm.get(java.lang.foreign.ValueLayout.JAVA_FLOAT_UNALIGNED, at + 4) * 32767f : l;
+                                l = pcm.getFloat(at) * 32767f;
+                                r = channels > 1 ? pcm.getFloat(at + 4) * 32767f : l;
                             } else {
-                                l = pcm.get(java.lang.foreign.ValueLayout.JAVA_SHORT_UNALIGNED, at);
-                                r = channels > 1 ? pcm.get(java.lang.foreign.ValueLayout.JAVA_SHORT_UNALIGNED, at + 2) : l;
+                                l = pcm.getShort(at);
+                                r = channels > 1 ? pcm.getShort(at + 2) : l;
                             }
-                            mono[i] = (short) Math.clamp((int) ((l + r) * 0.5f), -32768, 32767);
+                            mono[i] = (short) Math.max(-32768, Math.min(32767, (int) ((l + r) * 0.5f)));
                         }
                     }
-                    releaseBuffer.invokeWithArguments(capture, n);
+                    releaseBuffer.invokeInt(new Object[]{capture, n});
                     if (n > 0) sink.accept(mono);
                 }
             }
-            com(client, AC_STOP, FunctionDescriptor.of(JAVA_INT, ADDRESS));
+            com(client, AC_STOP);
         } catch (Throwable e) {
             if (!closed) {
                 DdBeam.LOGGER.warn("System audio capture failed: {}", e.toString());
@@ -370,8 +330,8 @@ public final class WasapiLoopback implements AudioCapture {
             release(capture);
             release(client);
             try {
-                if (closeHandle != null && event.address() != 0) closeHandle.invokeWithArguments(event);
-                if (coUninit != null) coUninit.invokeWithArguments(List.of());
+                if (event != null) fn("kernel32", "CloseHandle").invokeInt(new Object[]{event});
+                if (comStarted) fn("ole32", "CoUninitialize").invoke(Void.class, new Object[0]);
             } catch (Throwable ignored) {
             }
         }
