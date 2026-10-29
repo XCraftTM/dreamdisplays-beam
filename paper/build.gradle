@@ -1,0 +1,45 @@
+plugins {
+    id 'java'
+}
+
+// Paper (and Purpur) plugin: relays Beam casts on servers without the Fabric mod. Built for Java 21 against the
+// stable Bukkit plugin messaging API, so one jar runs on Paper 1.21 up to 26.x.
+version = rootProject.mod_version
+base { archivesName = 'dreamdisplays-beam-paper' }
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(25) }
+}
+
+repositories {
+    maven { name = 'PaperMC'; url = 'https://repo.papermc.io/repository/maven-public/' }
+    mavenCentral()
+}
+
+// dev only: builds a room with a display when a player joins (see the paper test in the README)
+sourceSets {
+    testplugin {
+        compileClasspath += sourceSets.main.compileClasspath
+    }
+}
+
+dependencies {
+    compileOnly 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+    options.encoding = 'UTF-8'
+}
+
+processResources {
+    inputs.property 'version', project.version
+    filesMatching('plugin.yml') { expand version: project.version }
+}
+
+jar { archiveFileName = "dreamdisplays-beam-paper-${project.version}.jar" }
+
+tasks.register('testPluginJar', Jar) {
+    from sourceSets.testplugin.output
+    archiveFileName = 'ddbeam-paper-testscene.jar'
+}

@@ -83,6 +83,7 @@ public final class Casts {
 
     // ---- from the server (client thread) ----
 
+    /** A part of another player's JPEG frame (casts without H.264); the feed puts the parts together. */
     public static void onFrame(BeamPayloads.Frame frame) {
         if (!BeamConfig.get().showOtherCasts) return;
         LocalCast cast = local;
@@ -93,7 +94,8 @@ public final class Casts {
             feed = new CastFeed(frame.display(), frame.caster());
             FEEDS.put(frame.display(), feed);
         }
-        feed.submit(frame.jpeg());
+        byte[] jpeg = feed.parts.add(frame.seq(), frame.part(), frame.parts(), frame.data());
+        if (jpeg != null) feed.submit(jpeg);
     }
 
     /** A piece of another player's H.264 cast: decoded at the cast's own size and frame rate. */
@@ -110,8 +112,8 @@ public final class Casts {
             FEEDS.put(piece.display(), feed);
         }
         StreamDecoder decoder = feed.decoder;
-        if (decoder == null || decoder.width != w || decoder.height != h) {
-            // a new cast size: a new decoder (it waits for the next key frame)
+        if (decoder == null || decoder.dead() || decoder.width != w || decoder.height != h) {
+            // the first piece, a new cast size or a decoder that gave up: a new decoder (it waits for the next key frame)
             if (decoder != null) decoder.close();
             decoder = new StreamDecoder(feed, w, h);
             feed.decoder = decoder;

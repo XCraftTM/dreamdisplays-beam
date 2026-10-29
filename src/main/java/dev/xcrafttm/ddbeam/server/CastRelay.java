@@ -38,6 +38,7 @@ public final class CastRelay {
         long lastSentNs;
         long lastAudioNs;
         long dropped;
+        int keepSeq = -1;
         double budget;
         long budgetNs = System.nanoTime();
 
@@ -133,24 +134,29 @@ public final class CastRelay {
         };
     }
 
+    /** A part of a JPEG frame: whole frames are kept or dropped (frame rate limit, byte budget). */
     private static void frame(MinecraftServer server, ServerPlayer player, BeamPayloads.Frame payload) {
         Session session = SESSIONS.get(payload.display());
         if (session == null || !session.caster.equals(player.getUUID())) return;
         ServerConfig config = ServerConfig.get();
         long now = System.nanoTime();
         session.lastFrameNs = now;
-        if (now - session.lastSentNs < 1_000_000_000L / Math.max(1, config.maxFps) * 9 / 10) return;
-        // byte budget: refills at the configured rate, holds at most one second of it
-        double rate = config.maxKilobytesPerSecond * 1024.0;
-        session.budget = Math.min(rate, session.budget + rate * (now - session.budgetNs) / 1e9);
-        session.budgetNs = now;
-        int size = payload.jpeg().length;
-        if (size > session.budget) return;
-        session.budget -= size;
-        session.lastSentNs = now;
-
-        deliver(server, player, session, new BeamPayloads.Frame(session.display, session.caster, payload.seq(), payload.jpeg()),
-                BeamPayloads.Frame.TYPE);
+        if (payload.part() == 0) {
+            // byte budget: refills at the configured rate, holds at most one second of it
+            double rate = config.maxKilobytesPerSecond * 1024.0;
+            session.budget = Math.min(rate, session.budget + rate * (now - session.budgetNs) / 1e9);
+            session.budgetNs = now;
+            double frameBytes = (double) payload.data().length * payload.parts();
+            boolean tooSoon = now - session.lastSentNs < 1_000_000_000L / Math.max(1, config.maxFps) * 9 / 10;
+            session.keepSeq = tooSoon || frameBytes > session.budget ? -1 : payload.seq();
+            if (session.keepSeq < 0) return;
+            session.budget -= frameBytes;
+            session.lastSentNs = now;
+        } else if (payload.seq() != session.keepSeq) {
+            return;
+        }
+        deliver(server, player, session, new BeamPayloads.Frame(session.display, session.caster, payload.seq(), payload.part(),
+                payload.parts(), payload.data()), BeamPayloads.Frame.TYPE);
     }
 
     /**

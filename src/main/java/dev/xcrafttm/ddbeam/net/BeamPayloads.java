@@ -13,11 +13,18 @@ import java.util.UUID;
 
 /**
  * Everything Beam sends between a client and the server. The server only relays: a caster announces a cast
- * ({@link Start}), sends its frames as JPEG ({@link Frame}) and ends it ({@link Stop}); the server passes the frames
- * on to the players near the display and tells everyone when a cast ends.
+ * ({@link Start}), sends its video ({@link Stream}, or {@link Frame}s without an H.264 encoder) and audio, and ends
+ * it ({@link Stop}); the server passes it on to the players near the display and tells everyone when a cast ends.
+ * <p>
+ * Every packet stays below Minecraft's own size limits (about 32 KB to the server), so no packet splitting of the mod
+ * loader is needed and a plain Paper plugin can relay them too. The wire format (also in the Paper plugin): UUID =
+ * two big-endian longs, int = VarInt, bytes = VarInt length + bytes, string = VarInt length + UTF-8. Data from the
+ * server carries the caster right after the display, in place of the zero UUID the caster sends.
  */
 public final class BeamPayloads {
-    /** Largest JPEG frame that is relayed (Fabric splits payloads above Minecraft's packet limits itself). */
+    /** Largest piece of data in one packet. */
+    public static final int MAX_PART = 30_000;
+    /** Largest JPEG frame (sent in parts). */
     public static final int MAX_FRAME_BYTES = 1 << 20;
 
     private BeamPayloads() {
@@ -27,7 +34,7 @@ public final class BeamPayloads {
         return new CustomPacketPayload.Type<>(Identifier.fromNamespaceAndPath("ddbeam", path));
     }
 
-    /** Caster to server: "I am casting onto this display now", with the picture size the frames will have. */
+    /** Caster to server: "I am casting onto this display now", with the picture size. */
     public record Start(UUID display, int width, int height) implements CustomPacketPayload {
         public static final Type<Start> TYPE = typeOf("start");
         public static final StreamCodec<ByteBuf, Start> CODEC = StreamCodec.composite(
@@ -51,12 +58,23 @@ public final class BeamPayloads {
         }
     }
 
-    /** Both ways: one JPEG frame of a cast; {@code caster} is the casting player (filled in by the server). */
-    public record Frame(UUID display, UUID caster, int seq, byte[] jpeg) implements CustomPacketPayload {
+    /**
+     * Both ways: part {@code part} of {@code parts} of one JPEG frame ({@code seq}); only used when the caster has no
+     * H.264 encoder. {@code caster} is the casting player (filled in by the server).
+     */
+    public record Frame(UUID display, UUID caster, int seq, int part, int parts, byte[] data) implements CustomPacketPayload {
         public static final Type<Frame> TYPE = typeOf("frame");
-        public static final StreamCodec<ByteBuf, Frame> CODEC = StreamCodec.composite(
-                UUIDUtil.STREAM_CODEC, Frame::display, UUIDUtil.STREAM_CODEC, Frame::caster, ByteBufCodecs.VAR_INT, Frame::seq,
-                ByteBufCodecs.byteArray(MAX_FRAME_BYTES), Frame::jpeg, Frame::new);
+        public static final StreamCodec<ByteBuf, Frame> CODEC = StreamCodec.of(
+                (buf, f) -> {
+                    UUIDUtil.STREAM_CODEC.encode(buf, f.display());
+                    UUIDUtil.STREAM_CODEC.encode(buf, f.caster());
+                    ByteBufCodecs.VAR_INT.encode(buf, f.seq());
+                    ByteBufCodecs.VAR_INT.encode(buf, f.part());
+                    ByteBufCodecs.VAR_INT.encode(buf, f.parts());
+                    ByteBufCodecs.byteArray(MAX_PART).encode(buf, f.data());
+                },
+                buf -> new Frame(UUIDUtil.STREAM_CODEC.decode(buf), UUIDUtil.STREAM_CODEC.decode(buf), ByteBufCodecs.VAR_INT.decode(buf),
+                        ByteBufCodecs.VAR_INT.decode(buf), ByteBufCodecs.VAR_INT.decode(buf), ByteBufCodecs.byteArray(MAX_PART).decode(buf)));
 
         @Override
         public Type<Frame> type() {
@@ -77,11 +95,11 @@ public final class BeamPayloads {
                     ByteBufCodecs.VAR_INT.encode(buf, s.seq());
                     ByteBufCodecs.VAR_INT.encode(buf, s.width());
                     ByteBufCodecs.VAR_INT.encode(buf, s.height());
-                    ByteBufCodecs.byteArray(MAX_FRAME_BYTES).encode(buf, s.data());
+                    ByteBufCodecs.byteArray(MAX_PART).encode(buf, s.data());
                 },
                 buf -> new Stream(UUIDUtil.STREAM_CODEC.decode(buf), UUIDUtil.STREAM_CODEC.decode(buf),
                         ByteBufCodecs.VAR_INT.decode(buf), ByteBufCodecs.VAR_INT.decode(buf), ByteBufCodecs.VAR_INT.decode(buf),
-                        ByteBufCodecs.byteArray(MAX_FRAME_BYTES).decode(buf)));
+                        ByteBufCodecs.byteArray(MAX_PART).decode(buf)));
 
         @Override
         public Type<Stream> type() {
@@ -120,13 +138,13 @@ public final class BeamPayloads {
         PayloadTypeRegistry<RegistryFriendlyByteBuf> toClient = PayloadTypeRegistry.clientboundPlay();
         toServer.register(Start.TYPE, Start.CODEC);
         toServer.register(Stop.TYPE, Stop.CODEC);
-        toServer.registerLarge(Frame.TYPE, Frame.CODEC, MAX_FRAME_BYTES + 64);
+        toServer.register(Frame.TYPE, Frame.CODEC);
+        toServer.register(Stream.TYPE, Stream.CODEC);
         toServer.register(Audio.TYPE, Audio.CODEC);
-        toClient.register(Audio.TYPE, Audio.CODEC);
-        toServer.registerLarge(Stream.TYPE, Stream.CODEC, MAX_FRAME_BYTES + 64);
-        toClient.registerLarge(Stream.TYPE, Stream.CODEC, MAX_FRAME_BYTES + 64);
         toClient.register(Stop.TYPE, Stop.CODEC);
         toClient.register(Notice.TYPE, Notice.CODEC);
-        toClient.registerLarge(Frame.TYPE, Frame.CODEC, MAX_FRAME_BYTES + 64);
+        toClient.register(Frame.TYPE, Frame.CODEC);
+        toClient.register(Stream.TYPE, Stream.CODEC);
+        toClient.register(Audio.TYPE, Audio.CODEC);
     }
 }

@@ -73,6 +73,18 @@ loom {
                 if (project.hasProperty(prop)) vmArg "-Dddbeam.test.${key}=${project.property(prop)}"
             }
         }
+        // the caster of a streaming test on a separate server (e.g. the Paper test server on port 25700)
+        caster {
+            client()
+            name = 'Beam caster'
+            source sourceSets.testmod
+            runDir = "run/caster/${mc}"
+            programArgs '--quickPlayMultiplayer', '127.0.0.1:25700', '--width', '1280', '--height', '720', '--username', 'Caster'
+            vmArgs '-Xmx3G', '--enable-native-access=ALL-UNNAMED', '-Dddbeam.test.mode=stream'
+            ['testPrefix': 'prefix', 'testSource': 'source', 'testRes': 'res', 'testFps': 'fps'].each { prop, key ->
+                if (project.hasProperty(prop)) vmArg "-Dddbeam.test.${key}=${project.property(prop)}"
+            }
+        }
         // a second player for the streaming test: joins the caster's world opened to LAN (port 25700)
         viewer {
             client()

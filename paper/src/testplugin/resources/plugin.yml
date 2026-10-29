@@ -1,0 +1,5 @@
+name: DreamDisplaysBeamTestScene
+version: '0'
+main: dev.xcrafttm.ddbeam.paper.test.TestScenePlugin
+api-version: '1.21'
+depend: [DreamDisplays]

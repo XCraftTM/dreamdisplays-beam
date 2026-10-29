@@ -1,0 +1,15 @@
+# Dream Displays Beam relay
+
+# Pass casts on to other players at all.
+relay: true
+# Who may cast onto a display for the other players:
+#   everyone  - anyone
+#   owner     - the display's owner, operators and players with ddbeam.cast.any
+#   operators - operators and players with ddbeam.cast.any
+whoCanCast: owner
+# Players within this many blocks of a display get its cast.
+viewDistance: 96
+# Per caster: kilobytes per second passed on to each viewer; data above it is dropped. 1440p60 needs about 1500.
+maxKilobytesPerSecond: 4096
+# Per caster, only for casts sent as JPEG frames (no H.264 encoder on the caster's computer).
+maxFps: 30

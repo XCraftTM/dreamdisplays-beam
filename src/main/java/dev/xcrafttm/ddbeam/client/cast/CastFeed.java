@@ -41,6 +41,9 @@ public final class CastFeed {
     private volatile long received, decoded, failed;
     private long shown;
 
+    /** Parts of the other player's JPEG frame that is arriving (client thread). */
+    final FrameParts parts = new FrameParts();
+
     /** The other player's H.264 stream, decoded by FFmpeg (client thread). */
     StreamDecoder decoder;
 
@@ -186,6 +189,28 @@ public final class CastFeed {
         CastTexture(int width, int height) {
             super(() -> "ddbeam cast", width, height, false);
             sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
+        }
+    }
+
+    /** Puts a JPEG frame together from its parts; a frame with a part missing is dropped. */
+    static final class FrameParts {
+        private int seq = -1, next;
+        private java.io.ByteArrayOutputStream data = new java.io.ByteArrayOutputStream();
+
+        /** The whole frame once its last part arrived, else null. */
+        byte[] add(int seq, int part, int parts, byte[] bytes) {
+            if (parts <= 0 || part >= parts || parts > dev.xcrafttm.ddbeam.net.BeamPayloads.MAX_FRAME_BYTES / dev.xcrafttm.ddbeam.net.BeamPayloads.MAX_PART + 1) return null;
+            if (part == 0) {
+                this.seq = seq;
+                next = 0;
+                data.reset();
+            }
+            if (seq != this.seq || part != next) return null;
+            data.write(bytes, 0, bytes.length);
+            next++;
+            if (next < parts) return null;
+            this.seq = -1;
+            return data.toByteArray();
         }
     }
 }

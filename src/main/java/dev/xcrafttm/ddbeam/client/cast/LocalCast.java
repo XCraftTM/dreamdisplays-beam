@@ -173,12 +173,16 @@ public final class LocalCast {
     private void onStream(byte[] data) {
         if (ended || !serverShares) return;
         streamBytes += data.length;
-        int s = seq++;
-        Minecraft.getInstance().execute(() -> {
-            if (Casts.local() == this && ClientPlayNetworking.canSend(BeamPayloads.Stream.TYPE)) {
-                ClientPlayNetworking.send(new BeamPayloads.Stream(display, NOBODY, s, width, height, data));
-            }
-        });
+        // in packets below Minecraft's size limit
+        for (int at = 0; at < data.length; at += BeamPayloads.MAX_PART) {
+            byte[] piece = java.util.Arrays.copyOfRange(data, at, Math.min(data.length, at + BeamPayloads.MAX_PART));
+            int s = seq++;
+            Minecraft.getInstance().execute(() -> {
+                if (Casts.local() == this && ClientPlayNetworking.canSend(BeamPayloads.Stream.TYPE)) {
+                    ClientPlayNetworking.send(new BeamPayloads.Stream(display, NOBODY, s, width, height, piece));
+                }
+            });
+        }
     }
 
     /** Capture thread: show it here; without an H.264 encoder stream it as JPEG at the share frame rate. */
@@ -196,9 +200,12 @@ public final class LocalCast {
 
     private void send(byte[] jpeg) {
         int s = seq++;
+        int parts = (jpeg.length + BeamPayloads.MAX_PART - 1) / BeamPayloads.MAX_PART;
         Minecraft.getInstance().execute(() -> {
-            if (Casts.local() == this && ClientPlayNetworking.canSend(BeamPayloads.Frame.TYPE)) {
-                ClientPlayNetworking.send(new BeamPayloads.Frame(display, NOBODY, s, jpeg));
+            if (Casts.local() != this || !ClientPlayNetworking.canSend(BeamPayloads.Frame.TYPE)) return;
+            for (int i = 0; i < parts; i++) {
+                byte[] part = java.util.Arrays.copyOfRange(jpeg, i * BeamPayloads.MAX_PART, Math.min(jpeg.length, (i + 1) * BeamPayloads.MAX_PART));
+                ClientPlayNetworking.send(new BeamPayloads.Frame(display, NOBODY, s, i, parts, part));
             }
         });
     }
