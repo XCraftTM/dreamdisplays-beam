@@ -45,6 +45,10 @@ jobs:
         with:
           tool: cargo-zigbuild
 
+      - name: Tests
+        working-directory: native/wayland-capture
+        run: cargo test --release --locked
+
       # zig only searches the paths it is given: a folder with nothing but PipeWire's library in it, so nothing
       # else of the build system's own libraries gets linked
       - name: Build

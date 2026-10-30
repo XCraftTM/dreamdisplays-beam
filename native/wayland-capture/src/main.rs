@@ -105,7 +105,7 @@ fn main() {
     let Ok((fd, node)) = stream.recv() else {
         fail(PORTAL, "the portal ended early");
     };
-    let code = capture(fd, node, args.fps, args.ffmpeg);
+    let code = capture(fd, node, args.fps, args.window, args.ffmpeg);
     let _ = done.send(());
     let _ = portal_thread.join();
     std::process::exit(code);
@@ -162,6 +162,8 @@ struct State {
     /// The colour masks of the pixel format coming in now (red, green, blue in a little-endian pixel), None before
     /// the first format.
     masks: Option<[u32; 3]>,
+    /// The pixel format has alpha (in its fourth byte) and a window is cast: see opaque_box.
+    trim: bool,
     /// The size of the frames coming in now (a window can change size).
     source_width: u32,
     source_height: u32,
@@ -186,6 +188,26 @@ fn color_masks(format: VideoFormat) -> Option<[u32; 3]> {
         VideoFormat::xBGR => [0xFF00_0000, 0x00FF_0000, 0x0000_FF00],
         _ => return None,
     })
+}
+
+/// Alpha from which a pixel counts as part of the window (not its shadow).
+const OPAQUE: u8 = 250;
+
+/// The part of a window's picture that is the window itself: without the margin around it that holds its shadow,
+/// which is see-through (and black once alpha is left out). From each side, rows and columns go while none of their
+/// pixels is opaque; a picture without any opaque pixel stays as it is.
+fn opaque_box(pixels: &[u8], row_bytes: usize, region: (u32, u32, u32, u32)) -> (u32, u32, u32, u32) {
+    let (x, y, w, h) = (region.0 as usize, region.1 as usize, region.2 as usize, region.3 as usize);
+    let alpha = |px: usize, py: usize| pixels.get(py * row_bytes + px * 4 + 3).copied().unwrap_or(0);
+    let row_opaque = |py: usize| (x..x + w).any(|px| alpha(px, py) >= OPAQUE);
+    let Some(top) = (y..y + h).find(|&py| row_opaque(py)) else {
+        return region;
+    };
+    let bottom = (top..y + h).rev().find(|&py| row_opaque(py)).unwrap_or(top);
+    let column_opaque = |px: usize| (top..=bottom).any(|py| alpha(px, py) >= OPAQUE);
+    let left = (x..x + w).find(|&px| column_opaque(px)).unwrap_or(x);
+    let right = (left..x + w).rev().find(|&px| column_opaque(px)).unwrap_or(left);
+    (left as u32, top as u32, (right - left + 1) as u32, (bottom - top + 1) as u32)
 }
 
 /// The BMP headers (file header, BITMAPINFOHEADER, bit fields) of a top-down 32-bit picture.
@@ -305,8 +327,8 @@ fn with_pixels(data: &mut spa::buffer::Data, f: impl FnOnce(&[u8])) {
     }
 }
 
-fn capture(fd: OwnedFd, node: u32, fps: u32, ffmpeg_args: Vec<String>) -> i32 {
-    match run(fd, node, fps, ffmpeg_args) {
+fn capture(fd: OwnedFd, node: u32, fps: u32, window: bool, ffmpeg_args: Vec<String>) -> i32 {
+    match run(fd, node, fps, window, ffmpeg_args) {
         Ok(code) => code,
         Err(e) => {
             eprintln!("ddbeam-wayland: PipeWire: {e}");
@@ -315,13 +337,14 @@ fn capture(fd: OwnedFd, node: u32, fps: u32, ffmpeg_args: Vec<String>) -> i32 {
     }
 }
 
-fn run(fd: OwnedFd, node: u32, fps: u32, ffmpeg_args: Vec<String>) -> Result<i32, pw::Error> {
+fn run(fd: OwnedFd, node: u32, fps: u32, window: bool, ffmpeg_args: Vec<String>) -> Result<i32, pw::Error> {
     pw::init();
     let mainloop = pw::main_loop::MainLoop::new(None)?;
     let context = pw::context::Context::new(&mainloop)?;
     let core = context.connect_fd(fd, None)?;
     let state = Rc::new(RefCell::new(State {
         masks: None,
+        trim: false,
         source_width: 0,
         source_height: 0,
         frame: Vec::new(),
@@ -381,6 +404,7 @@ fn run(fd: OwnedFd, node: u32, fps: u32, ffmpeg_args: Vec<String>) -> Result<i32
                     return;
                 };
                 s.masks = Some(masks);
+                s.trim = window && matches!(info.format(), VideoFormat::BGRA | VideoFormat::RGBA);
                 s.source_width = size.width;
                 s.source_height = size.height;
                 if let Some(meta) = crop_meta_param() {
@@ -432,14 +456,16 @@ fn run(fd: OwnedFd, node: u32, fps: u32, ffmpeg_args: Vec<String>) -> Result<i32
                 let has_data = !buffer.is_null() && unsafe { (*buffer).n_datas > 0 && !(*buffer).datas.is_null() };
                 if let (Some(masks), true) = (s.masks, has_data) {
                     let (sw, sh) = (s.source_width, s.source_height);
-                    let (x, y, w, h) = unsafe { shown_region(buffer, sw, sh) };
+                    let shown = unsafe { shown_region(buffer, sw, sh) };
                     let data = unsafe { &mut *((*buffer).datas as *mut spa::buffer::Data) };
                     let stride = data.chunk().stride();
+                    let trim = s.trim;
                     with_pixels(data, |pixels| {
                         let source_row = if stride > 0 { stride as usize } else { sw as usize * 4 };
-                        if source_row == 0 || w == 0 || h == 0 {
+                        if source_row == 0 || shown.2 == 0 || shown.3 == 0 {
                             return;
                         }
+                        let (x, y, w, h) = if trim { opaque_box(pixels, source_row, shown) } else { shown };
                         let out_row = w as usize * 4;
                         bmp_header(&mut s.frame, w, h, masks);
                         s.frame.resize(BMP_HEADER + out_row * h as usize, 0);
@@ -461,6 +487,8 @@ fn run(fd: OwnedFd, node: u32, fps: u32, ffmpeg_args: Vec<String>) -> Result<i32
         })
         .register()?;
 
+    // a window: alpha first, it tells the window from its shadow (opaque_box)
+    let preferred = if window { VideoFormat::BGRA } else { VideoFormat::BGRx };
     let format = pw::spa::pod::object!(
         pw::spa::utils::SpaTypes::ObjectParamFormat,
         pw::spa::param::ParamType::EnumFormat,
@@ -471,10 +499,10 @@ fn run(fd: OwnedFd, node: u32, fps: u32, ffmpeg_args: Vec<String>) -> Result<i32
             Choice,
             Enum,
             Id,
+            preferred,
             VideoFormat::BGRx,
-            VideoFormat::BGRx,
-            VideoFormat::RGBx,
             VideoFormat::BGRA,
+            VideoFormat::RGBx,
             VideoFormat::RGBA,
             VideoFormat::xRGB,
             VideoFormat::xBGR
@@ -583,4 +611,39 @@ fn run(fd: OwnedFd, node: u32, fps: u32, ffmpeg_args: Vec<String>) -> Result<i32
         let _ = child.wait();
     }
     Ok(code)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::opaque_box;
+
+    /// A 10x8 picture, see-through but for an opaque window at (2, 1) to (7, 5), with a faint shadow around it.
+    fn picture() -> Vec<u8> {
+        let mut pixels = vec![0u8; 10 * 8 * 4];
+        for y in 0..8 {
+            for x in 0..10 {
+                let i = (y * 10 + x) * 4;
+                pixels[i + 3] = if (2..=7).contains(&x) && (1..=5).contains(&y) { 255 } else { 60 };
+            }
+        }
+        // a rounded corner
+        pixels[(1 * 10 + 2) * 4 + 3] = 0;
+        pixels
+    }
+
+    #[test]
+    fn trims_the_shadow() {
+        assert_eq!(opaque_box(&picture(), 40, (0, 0, 10, 8)), (2, 1, 6, 5));
+    }
+
+    #[test]
+    fn stays_within_the_region() {
+        assert_eq!(opaque_box(&picture(), 40, (3, 2, 7, 6)), (3, 2, 5, 4));
+    }
+
+    #[test]
+    fn keeps_a_picture_without_opaque_pixels() {
+        let pixels = vec![0u8; 10 * 8 * 4];
+        assert_eq!(opaque_box(&pixels, 40, (0, 0, 10, 8)), (0, 0, 10, 8));
+    }
 }
