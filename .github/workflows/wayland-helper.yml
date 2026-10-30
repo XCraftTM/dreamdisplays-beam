@@ -1,7 +1,8 @@
 # Builds the native Wayland capture helper (native/wayland-capture) for x86-64 and ARM Linux. The binaries go into
 # the mod at src/main/resources/ddbeam/native/linux-<arch>/ddbeam-wayland (download them from the run's artifacts).
-# Built on Ubuntu 22.04, so they run on distributions from about 2022 on (glibc 2.35); they need nothing but
-# PipeWire's library at run time.
+# The PipeWire bindings need newer headers than old distributions have, so it builds on Ubuntu 24.04 but links with
+# zig against glibc 2.31: the binaries run on distributions from about 2020 on (Debian 11, Ubuntu 20.04, Fedora 32)
+# and need nothing but PipeWire's library at run time.
 name: Wayland helper
 
 on:
@@ -11,15 +12,18 @@ on:
       - '.github/workflows/wayland-helper.yml'
   workflow_dispatch:
 
+env:
+  GLIBC: '2.31'
+
 jobs:
   build:
     strategy:
       matrix:
         include:
           - arch: x86_64
-            runner: ubuntu-22.04
+            runner: ubuntu-24.04
           - arch: aarch64
-            runner: ubuntu-22.04-arm
+            runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -30,23 +34,44 @@ jobs:
           sudo apt-get install -y --no-install-recommends libpipewire-0.3-dev clang pkg-config
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.arch }}-unknown-linux-gnu
 
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+
+      # zig only searches the paths it is given: a folder with nothing but PipeWire's library in it, so nothing
+      # else of the build system's own libraries gets linked
       - name: Build
         working-directory: native/wayland-capture
-        run: cargo build --release --locked
+        run: |
+          mkdir -p "$RUNNER_TEMP/pwlib"
+          ln -sf "$(pkg-config --variable=libdir libpipewire-0.3)/libpipewire-0.3.so" "$RUNNER_TEMP/pwlib/"
+          RUSTFLAGS="-L native=$RUNNER_TEMP/pwlib" \
+            cargo zigbuild --release --locked --target ${{ matrix.arch }}-unknown-linux-gnu.$GLIBC
 
-      - name: Check it runs (usage message, exit code 64)
+      - name: Check it runs (usage message, exit code 64) and needs no newer glibc
         working-directory: native/wayland-capture
         run: |
+          bin=target/${{ matrix.arch }}-unknown-linux-gnu/release/ddbeam-wayland
           set +e
-          ./target/release/ddbeam-wayland
+          "$bin"
           code=$?
           set -e
           test "$code" = 64
-          ldd target/release/ddbeam-wayland
+          ldd "$bin"
+          newest=$(objdump -T "$bin" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)
+          echo "newest glibc symbol: $newest"
+          test "$(printf '%s\n%s\n' "$newest" "$GLIBC" | sort -V | tail -1)" = "$GLIBC"
+          cp "$bin" ddbeam-wayland
 
       - uses: actions/upload-artifact@v4
         with:
           name: ddbeam-wayland-linux-${{ matrix.arch }}
-          path: native/wayland-capture/target/release/ddbeam-wayland
+          path: native/wayland-capture/ddbeam-wayland
           if-no-files-found: error
