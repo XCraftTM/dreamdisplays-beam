@@ -8,6 +8,7 @@ import dev.xcrafttm.ddbeam.client.Mc;
 import dev.xcrafttm.ddbeam.client.capture.CameraModes;
 import dev.xcrafttm.ddbeam.client.capture.CaptureSource;
 import dev.xcrafttm.ddbeam.client.capture.Sources;
+import dev.xcrafttm.ddbeam.client.capture.WaylandPortal;
 import dev.xcrafttm.ddbeam.client.cast.Casts;
 import dev.xcrafttm.ddbeam.client.cast.LocalCast;
 import dev.xcrafttm.ddbeam.client.cast.Targets;
@@ -573,6 +574,9 @@ public final class BeamScreen extends Screen {
             config.systemAudio = audio;
         }
         BeamConfig.save();
+        // Wayland: going live (or switching) from here is a new choice, so the desktop's picker shows again; the
+        // remembered one only spares the picker when Beam itself starts the cast again (a change of codec)
+        if (selected.portal()) WaylandPortal.forget(selected.kind());
         Casts.start(target, new LocalCast.Settings(selected, res[0], res[1], config.fps, share && serverRelays(), audio));
         Mc.show(null);
     }

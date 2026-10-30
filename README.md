@@ -74,11 +74,13 @@ Fabric (see the table below). Folia is not supported.
 | Linux Wayland | desktop portal (the desktop's own picker) + PipeWire | desktop portal | V4L2 | as above | as above |
 | macOS | AVFoundation | – | AVFoundation | only through a loopback input such as BlackHole (`systemAudioDevice`) | AVFoundation input of the same name |
 
-Notes on what was tested: everything on Windows 11. **Linux and macOS are implemented but untested**:
-- Wayland needs `python3` with PyGObject (`python3-gi` / `python-gobject`) and GStreamer with its PipeWire plugin
-  (`gstreamer1.0-pipewire` + `gstreamer1.0-plugins-good`, or `gst-plugin-pipewire`). Beam writes a small helper,
-  `config/ddbeam/wayland-cast.py`, that asks the portal for the stream. The desktop asks once which screen or window
-  to share and remembers the choice. Wayland allows no previews before that choice.
+Notes on what was tested: everything on Windows 11. **Linux and macOS are implemented but less tested**:
+- Wayland on x86-64 and ARM needs nothing but PipeWire: Beam writes its native helper, `config/ddbeam/ddbeam-wayland`
+  (Rust, from `native/wayland-capture`, glibc 2.31 or newer), that asks the portal for the stream and hands it to
+  FFmpeg. On other processors a Python helper takes its place, `config/ddbeam/wayland-cast.py`, which needs `python3`
+  with PyGObject (`python3-gi` / `python-gobject`) and GStreamer with its PipeWire plugin (`gstreamer1.0-pipewire` +
+  `gstreamer1.0-plugins-good`, or `gst-plugin-pipewire`). Go Live and Switch show the desktop's picker for the
+  screen or window each time; Wayland allows no previews before that choice.
 - macOS asks for the screen recording and camera permissions (for the launcher).
 
 ## Commands

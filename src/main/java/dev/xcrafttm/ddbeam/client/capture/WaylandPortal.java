@@ -9,8 +9,8 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 
 /**
- * The Wayland capture helpers, written next to the config, where they also keep the portal's restore tokens (the
- * picker then only shows the first time):
+ * The Wayland capture helpers, written next to the config, where they also keep the portal's restore tokens (a cast
+ * Beam starts again by itself skips the picker; one started from the dialog shows it, see {@link #forget}):
  * <ul>
  *   <li>{@code ddbeam-wayland}, native (Rust, from {@code native/wayland-capture}; in the jar for x86-64 and ARM
  *       Linux): the portal and PipeWire, raw frames into Beam's usual FFmpeg pipeline, so the cast streams as
@@ -66,6 +66,15 @@ public final class WaylandPortal {
 
     public static Path tokenFile(CaptureSource.Kind kind) throws IOException {
         return dir().resolve("portal-" + kind.name().toLowerCase(java.util.Locale.ROOT) + ".token");
+    }
+
+    /** Drops the remembered choice, so the next cast of this kind shows the desktop's picker. */
+    public static void forget(CaptureSource.Kind kind) {
+        try {
+            Files.deleteIfExists(tokenFile(kind));
+        } catch (IOException ignored) {
+            // the picker is skipped once more; nothing breaks
+        }
     }
 
     /** What a helper exit code means, as a translation key (null: no known reason). */
