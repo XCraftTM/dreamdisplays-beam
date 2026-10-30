@@ -83,11 +83,11 @@ public record CaptureSource(Kind kind, int index, String name, int x, int y, int
 
     /** @param still for a single picture: gdigrab even where ddagrab casts (its first frame is not black) */
     public List<String> inputArgs(int fps, boolean still) {
-        // Wayland: raw frames from the native helper on stdin; it fills in the size and pixel format PipeWire settled
-        // on, and the frames come when the picture changes (timed as they arrive; the fps filter evens them out)
+        // Wayland: BMP pictures from the native helper on stdin, each as big as the screen or window is right then (the
+        // filters follow a window that changes size); they come when the picture changes, timed as they arrive to the
+        // millisecond, and the fps filter evens them out
         if (portal()) {
-            return List.of("-f", "rawvideo", "-pix_fmt", "{pix_fmt}", "-video_size", "{size}",
-                    "-use_wallclock_as_timestamps", "1", "-i", "pipe:0");
+            return List.of("-f", "bmp_pipe", "-framerate", "1000", "-use_wallclock_as_timestamps", "1", "-i", "pipe:0");
         }
         BeamConfig config = BeamConfig.get();
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);

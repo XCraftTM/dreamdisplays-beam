@@ -2,13 +2,14 @@
 //!
 //! Wayland lets applications capture the screen only through the desktop portal (org.freedesktop.portal.ScreenCast):
 //! the desktop shows its own picker, then hands out a PipeWire stream. This helper asks the portal for that stream,
-//! receives its frames from PipeWire and feeds them to FFmpeg as raw video, which Beam's usual pipeline then turns
+//! receives its frames from PipeWire and feeds them to FFmpeg as BMP pictures, which Beam's usual pipeline then turns
 //! into JPEG frames for the display and H.264 / HEVC for the other players. It stays alive while capturing: the portal
 //! ends the session when the helper's D-Bus connection closes.
 //!
 //! Usage: ddbeam-wayland FPS CURSOR(0|1) TYPES(1 monitor, 2 window) TOKEN_FILE -- FFMPEG ARGS...
-//! The FFmpeg arguments read raw video from stdin; "{size}" and "{pix_fmt}" in them become the picture's size and
-//! pixel format once PipeWire has settled them. FFmpeg's stdout and stderr are the helper's.
+//! The FFmpeg arguments read BMP pictures from stdin (-f bmp_pipe), each one as big as what is shown: a window's own
+//! part of the stream (PipeWire's crop region), at its size of the moment, so FFmpeg follows a window that changes
+//! size. FFmpeg's stdout and stderr are the helper's.
 //! Exit codes: 2 cancelled in the picker, 5 portal error, 6 PipeWire error, 7 FFmpeg did not start, 64 usage;
 //! otherwise FFmpeg's own.
 
@@ -158,12 +159,13 @@ async fn open<'a>(
 
 /// What the PipeWire callbacks share (all on PipeWire's thread).
 struct State {
-    /// The picture's fixed size and FFmpeg's name of its pixel format, set by the first format.
-    width: u32,
-    height: u32,
-    pix_fmt: Option<&'static str>,
-    /// The size of the frames coming in now (a window can change size; the output keeps the first one).
+    /// The colour masks of the pixel format coming in now (red, green, blue in a little-endian pixel), None before
+    /// the first format.
+    masks: Option<[u32; 3]>,
+    /// The size of the frames coming in now (a window can change size).
     source_width: u32,
+    source_height: u32,
+    /// The newest picture as a BMP file.
     frame: Vec<u8>,
     fresh: bool,
     has_frame: bool,
@@ -174,17 +176,95 @@ struct State {
     exit: Option<i32>,
 }
 
-/// FFmpeg's name for a PipeWire pixel format (4 bytes per pixel only).
-fn ffmpeg_format(format: VideoFormat) -> Option<&'static str> {
+/// Where red, green and blue are in a pixel of a PipeWire format, read as a little-endian number (BMP's bit fields);
+/// 4 bytes per pixel only, alpha is left out.
+fn color_masks(format: VideoFormat) -> Option<[u32; 3]> {
     Some(match format {
-        VideoFormat::BGRx => "bgr0",
-        VideoFormat::RGBx => "rgb0",
-        VideoFormat::BGRA => "bgra",
-        VideoFormat::RGBA => "rgba",
-        VideoFormat::xRGB => "0rgb",
-        VideoFormat::xBGR => "0bgr",
+        VideoFormat::BGRx | VideoFormat::BGRA => [0x00FF_0000, 0x0000_FF00, 0x0000_00FF],
+        VideoFormat::RGBx | VideoFormat::RGBA => [0x0000_00FF, 0x0000_FF00, 0x00FF_0000],
+        VideoFormat::xRGB => [0x0000_FF00, 0x00FF_0000, 0xFF00_0000],
+        VideoFormat::xBGR => [0xFF00_0000, 0x00FF_0000, 0x0000_FF00],
         _ => return None,
     })
+}
+
+/// The BMP headers (file header, BITMAPINFOHEADER, bit fields) of a top-down 32-bit picture.
+const BMP_HEADER: usize = 14 + 40 + 12;
+
+fn bmp_header(out: &mut Vec<u8>, width: u32, height: u32, masks: [u32; 3]) {
+    let pixels = width * height * 4;
+    out.clear();
+    out.extend_from_slice(b"BM");
+    out.extend_from_slice(&(BMP_HEADER as u32 + pixels).to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&(BMP_HEADER as u32).to_le_bytes());
+    out.extend_from_slice(&40u32.to_le_bytes());
+    out.extend_from_slice(&(width as i32).to_le_bytes());
+    // negative: the rows from the top down, as PipeWire has them
+    out.extend_from_slice(&(-(height as i32)).to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&32u16.to_le_bytes());
+    // BI_BITFIELDS
+    out.extend_from_slice(&3u32.to_le_bytes());
+    out.extend_from_slice(&pixels.to_le_bytes());
+    out.extend_from_slice(&2835i32.to_le_bytes());
+    out.extend_from_slice(&2835i32.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    for mask in masks {
+        out.extend_from_slice(&mask.to_le_bytes());
+    }
+}
+
+/// The part of the stream that shows something (x, y, width, height): PipeWire's crop region of the buffer when it
+/// has one (a window cast gives a window smaller than the stream this way), else all of it.
+///
+/// SAFETY: buffer is a buffer PipeWire handed out and not yet queued back.
+unsafe fn shown_region(buffer: *const spa::sys::spa_buffer, width: u32, height: u32) -> (u32, u32, u32, u32) {
+    let all = (0, 0, width, height);
+    if buffer.is_null() || (*buffer).metas.is_null() {
+        return all;
+    }
+    let metas = std::slice::from_raw_parts((*buffer).metas, (*buffer).n_metas as usize);
+    for meta in metas {
+        if meta.type_ != spa::sys::SPA_META_VideoCrop
+            || meta.data.is_null()
+            || (meta.size as usize) < std::mem::size_of::<spa::sys::spa_meta_region>()
+        {
+            continue;
+        }
+        let region = (*(meta.data as *const spa::sys::spa_meta_region)).region;
+        let (x, y) = (region.position.x.max(0) as u32, region.position.y.max(0) as u32);
+        let (w, h) = (region.size.width, region.size.height);
+        if w == 0 || h == 0 || x >= width || y >= height {
+            return all;
+        }
+        return (x, y, w.min(width - x), h.min(height - y));
+    }
+    all
+}
+
+/// The Meta parameter that asks PipeWire for the crop region of each buffer.
+fn crop_meta_param() -> Option<Vec<u8>> {
+    let object = pw::spa::pod::Object {
+        type_: pw::spa::utils::SpaTypes::ObjectParamMeta.as_raw(),
+        id: pw::spa::param::ParamType::Meta.as_raw(),
+        properties: vec![
+            pw::spa::pod::Property {
+                key: spa::sys::SPA_PARAM_META_type,
+                flags: pw::spa::pod::PropertyFlags::empty(),
+                value: pw::spa::pod::Value::Id(pw::spa::utils::Id(spa::sys::SPA_META_VideoCrop)),
+            },
+            pw::spa::pod::Property {
+                key: spa::sys::SPA_PARAM_META_size,
+                flags: pw::spa::pod::PropertyFlags::empty(),
+                value: pw::spa::pod::Value::Int(std::mem::size_of::<spa::sys::spa_meta_region>() as i32),
+            },
+        ],
+    };
+    pw::spa::pod::serialize::PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &pw::spa::pod::Value::Object(object))
+        .ok()
+        .map(|(cursor, _)| cursor.into_inner())
 }
 
 /// Hands a buffer's pixels (its chunk) to [f]: from memory (MemPtr), or mapped read-only from the buffer's file
@@ -241,10 +321,9 @@ fn run(fd: OwnedFd, node: u32, fps: u32, ffmpeg_args: Vec<String>) -> Result<i32
     let context = pw::context::Context::new(&mainloop)?;
     let core = context.connect_fd(fd, None)?;
     let state = Rc::new(RefCell::new(State {
-        width: 0,
-        height: 0,
-        pix_fmt: None,
+        masks: None,
         source_width: 0,
+        source_height: 0,
         frame: Vec::new(),
         fresh: false,
         has_frame: false,
@@ -283,7 +362,7 @@ fn run(fd: OwnedFd, node: u32, fps: u32, ffmpeg_args: Vec<String>) -> Result<i32
             let mainloop = mainloop.clone();
             let state = state.clone();
             let writer_gone = writer_gone.clone();
-            move |_, _, id, param| {
+            move |stream, _, id, param| {
                 let Some(param) = param else { return };
                 if id != pw::spa::param::ParamType::Format.as_raw() {
                     return;
@@ -292,29 +371,28 @@ fn run(fd: OwnedFd, node: u32, fps: u32, ffmpeg_args: Vec<String>) -> Result<i32
                 if info.parse(param).is_err() {
                     return;
                 }
+                // a window that changes size changes the format too
                 let size = info.size();
                 let mut s = state.borrow_mut();
-                s.source_width = size.width;
-                if s.pix_fmt.is_some() {
-                    return;
-                }
-                // the first format: the picture's size and pixel format from now on, and FFmpeg starts
-                let Some(pix_fmt) = ffmpeg_format(info.format()) else {
+                let Some(masks) = color_masks(info.format()) else {
                     eprintln!("ddbeam-wayland: unsupported pixel format {:?}", info.format());
                     s.exit = Some(PIPEWIRE);
                     mainloop.quit();
                     return;
                 };
-                s.width = size.width;
-                s.height = size.height;
-                s.pix_fmt = Some(pix_fmt);
-                s.frame = vec![0; size.width as usize * size.height as usize * 4];
-                let video_size = format!("{}x{}", size.width, size.height);
-                let args: Vec<String> = s
-                    .ffmpeg_args
-                    .iter()
-                    .map(|a| a.replace("{size}", &video_size).replace("{pix_fmt}", pix_fmt))
-                    .collect();
+                s.masks = Some(masks);
+                s.source_width = size.width;
+                s.source_height = size.height;
+                if let Some(meta) = crop_meta_param() {
+                    if let Some(pod) = Pod::from_bytes(&meta) {
+                        let _ = stream.update_params(&mut [pod]);
+                    }
+                }
+                if s.child.is_some() {
+                    return;
+                }
+                // the first format: FFmpeg starts
+                let args = s.ffmpeg_args.clone();
                 match Command::new(&args[0]).args(&args[1..]).stdin(Stdio::piped()).spawn() {
                     Ok(mut child) => {
                         let mut stdin = child.stdin.take().expect("FFmpeg's stdin");
@@ -343,37 +421,42 @@ fn run(fd: OwnedFd, node: u32, fps: u32, ffmpeg_args: Vec<String>) -> Result<i32
         .process({
             let state = state.clone();
             move |stream, _| {
-                let Some(mut buffer) = stream.dequeue_buffer() else { return };
-                let datas = buffer.datas_mut();
-                let Some(data) = datas.first_mut() else { return };
-                let stride = data.chunk().stride();
-                let mut s = state.borrow_mut();
-                if s.pix_fmt.is_none() {
+                // SAFETY: the buffer is read here and handed back to the stream before returning
+                let raw = unsafe { stream.dequeue_raw_buffer() };
+                if raw.is_null() {
                     return;
                 }
+                let buffer = unsafe { (*raw).buffer };
+                let mut s = state.borrow_mut();
                 let s = &mut *s;
-                with_pixels(data, |pixels| {
-                    let source_row = if stride > 0 { stride as usize } else { s.source_width as usize * 4 };
-                    if source_row == 0 {
-                        return;
-                    }
-                    let out_row = s.width as usize * 4;
-                    let height = s.height as usize;
-                    let copy = out_row.min(source_row).min(s.source_width as usize * 4);
-                    let rows = height.min(pixels.len() / source_row);
-                    let frame = &mut s.frame;
-                    for y in 0..rows {
-                        let from = &pixels[y * source_row..y * source_row + copy];
-                        frame[y * out_row..y * out_row + copy].copy_from_slice(from);
-                        // a narrower source leaves the rest of the row black
-                        frame[y * out_row + copy..(y + 1) * out_row].fill(0);
-                    }
-                    for y in rows..height {
-                        frame[y * out_row..(y + 1) * out_row].fill(0);
-                    }
-                    s.fresh = true;
-                    s.has_frame = true;
-                });
+                let has_data = !buffer.is_null() && unsafe { (*buffer).n_datas > 0 && !(*buffer).datas.is_null() };
+                if let (Some(masks), true) = (s.masks, has_data) {
+                    let (sw, sh) = (s.source_width, s.source_height);
+                    let (x, y, w, h) = unsafe { shown_region(buffer, sw, sh) };
+                    let data = unsafe { &mut *((*buffer).datas as *mut spa::buffer::Data) };
+                    let stride = data.chunk().stride();
+                    with_pixels(data, |pixels| {
+                        let source_row = if stride > 0 { stride as usize } else { sw as usize * 4 };
+                        if source_row == 0 || w == 0 || h == 0 {
+                            return;
+                        }
+                        let out_row = w as usize * 4;
+                        bmp_header(&mut s.frame, w, h, masks);
+                        s.frame.resize(BMP_HEADER + out_row * h as usize, 0);
+                        for row in 0..h as usize {
+                            let at = (y as usize + row) * source_row + x as usize * 4;
+                            let to = BMP_HEADER + row * out_row;
+                            match pixels.get(at..at + out_row) {
+                                Some(from) => s.frame[to..to + out_row].copy_from_slice(from),
+                                // rows the buffer does not have stay black
+                                None => s.frame[to..to + out_row].fill(0),
+                            }
+                        }
+                        s.fresh = true;
+                        s.has_frame = true;
+                    });
+                }
+                unsafe { stream.queue_raw_buffer(raw) };
             }
         })
         .register()?;
