@@ -82,5 +82,6 @@
   "ddbeam.cast.video_paused": "The display's video is paused while you cast.",
   "ddbeam.cast.ended_by_video": "A video was started on the display, so your cast ended.",
   "ddbeam.cast.hidden_by_video": "You started the video, so the cast on this display is hidden for you until it starts again.",
-  "ddbeam.cast.codec_h264": "A player who can only receive H.264 is here: your cast goes on in H.264."
+  "ddbeam.cast.codec_h264": "A player who can only receive H.264 is here: your cast goes on in H.264.",
+  "ddbeam.error.portal.pipewire": "Could not get the screen from PipeWire. Is PipeWire running on your desktop?"
 }

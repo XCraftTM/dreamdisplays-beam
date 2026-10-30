@@ -7,3 +7,6 @@ bin/
 *.iml
 .vscode/
 dist/
+
+# the Wayland helper build (its binaries go into src/main/resources/ddbeam/native)
+native/wayland-capture/target/

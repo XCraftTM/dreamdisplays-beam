@@ -1,0 +1,52 @@
+# Builds the native Wayland capture helper (native/wayland-capture) for x86-64 and ARM Linux. The binaries go into
+# the mod at src/main/resources/ddbeam/native/linux-<arch>/ddbeam-wayland (download them from the run's artifacts).
+# Built on Ubuntu 22.04, so they run on distributions from about 2022 on (glibc 2.35); they need nothing but
+# PipeWire's library at run time.
+name: Wayland helper
+
+on:
+  push:
+    paths:
+      - 'native/wayland-capture/**'
+      - '.github/workflows/wayland-helper.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: PipeWire headers and clang (for the bindings)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpipewire-0.3-dev clang pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        working-directory: native/wayland-capture
+        run: cargo build --release --locked
+
+      - name: Check it runs (usage message, exit code 64)
+        working-directory: native/wayland-capture
+        run: |
+          set +e
+          ./target/release/ddbeam-wayland
+          code=$?
+          set -e
+          test "$code" = 64
+          ldd target/release/ddbeam-wayland
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ddbeam-wayland-linux-${{ matrix.arch }}
+          path: native/wayland-capture/target/release/ddbeam-wayland
+          if-no-files-found: error

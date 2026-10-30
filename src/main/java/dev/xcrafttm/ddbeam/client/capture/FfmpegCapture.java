@@ -113,14 +113,21 @@ public final class FfmpegCapture implements AutoCloseable {
     public void start() throws IOException {
         int quality = Math.max(2, Math.min(31, BeamConfig.get().quality));
         List<String> command = new ArrayList<>();
-        if (source.portal()) {
-            // Wayland: the desktop portal + PipeWire, through the helper (same multipart JPEG output)
+        java.nio.file.Path helper = source.portal() ? WaylandPortal.helper() : null;
+        if (source.portal() && helper == null) {
+            // Wayland on a processor without the native helper: the Python one (multipart JPEG, no stream)
             command.addAll(List.of("python3", WaylandPortal.script().toString(), Integer.toString(width), Integer.toString(height),
                     Integer.toString(fps), Integer.toString(Math.max(30, 100 - quality * 3)), BeamConfig.get().showCursor ? "1" : "0",
                     source.kind() == CaptureSource.Kind.WINDOW ? "2" : "1", WaylandPortal.tokenFile(source.kind()).toString()));
         } else {
+            if (helper != null) {
+                // Wayland: the native helper gets the screen from the portal and PipeWire and feeds FFmpeg's stdin
+                command.addAll(List.of(helper.toString(), Integer.toString(fps), BeamConfig.get().showCursor ? "1" : "0",
+                        source.kind() == CaptureSource.Kind.WINDOW ? "2" : "1", WaylandPortal.tokenFile(source.kind()).toString(), "--"));
+            }
             command.add(Ffmpeg.path());
-            command.addAll(List.of("-hide_banner", "-loglevel", "error", "-nostdin"));
+            command.addAll(List.of("-hide_banner", "-loglevel", "error"));
+            if (helper == null) command.add("-nostdin");
             String encoder = onStream != null ? streamEncoder() : null;
             if (encoder != null) command.addAll(VideoEncoder.deviceArgs(encoder));
             command.addAll(source.inputArgs(fps));
@@ -139,7 +146,9 @@ public final class FfmpegCapture implements AutoCloseable {
                         "-muxdelay", "0", "-muxpreload", "0", "-flush_packets", "1",
                         "tcp://127.0.0.1:" + socket.getLocalPort()));
                 streaming = true;
-                Thread stream = new Thread(() -> readStream(socket), "ddbeam-ffmpeg-stream");
+                // on Wayland FFmpeg only starts once the picker is answered
+                int acceptMs = helper != null ? 600_000 : 15_000;
+                Thread stream = new Thread(() -> readStream(socket, acceptMs), "ddbeam-ffmpeg-stream");
                 stream.setDaemon(true);
                 stream.start();
             } else {
@@ -163,9 +172,9 @@ public final class FfmpegCapture implements AutoCloseable {
     }
 
     /** The H.264 stream: handed on in pieces as FFmpeg writes them (a piece ends where FFmpeg pauses). */
-    private void readStream(java.net.ServerSocket socket) {
+    private void readStream(java.net.ServerSocket socket, int acceptMs) {
         try (socket) {
-            socket.setSoTimeout(15_000);
+            socket.setSoTimeout(acceptMs);
             try (java.net.Socket client = socket.accept(); InputStream in = client.getInputStream()) {
                 byte[] buf = new byte[64 * 1024];
                 java.io.ByteArrayOutputStream pending = new java.io.ByteArrayOutputStream(128 * 1024);
