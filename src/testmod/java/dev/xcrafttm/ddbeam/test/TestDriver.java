@@ -198,6 +198,13 @@ public final class TestDriver implements ClientModInitializer {
             case 41 -> {
                 if (now - stepAt < 800) return;
                 shot(mc, "dialog-share-tip");
+                if (Mc.screen() instanceof BeamScreen dialog) dialog.openSelect(3);
+                step = 43;
+                stepAt = now;
+            }
+            case 43 -> {
+                if (now - stepAt < 800) return;
+                shot(mc, "dialog-fit");
                 if (Mc.screen() instanceof BeamScreen dialog) dialog.openSelect(0);
                 step = 40;
                 stepAt = now;

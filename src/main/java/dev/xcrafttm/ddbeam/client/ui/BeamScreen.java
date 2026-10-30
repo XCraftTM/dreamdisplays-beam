@@ -49,6 +49,8 @@ public final class BeamScreen extends Screen {
     private static final int[][] RESOLUTIONS = {{854, 480}, {1280, 720}, {1920, 1080}, {2560, 1440}};
     private static final String[] RESOLUTION_LABELS = {"480p", "720p", "1080p", "1440p"};
     private static final int[] FRAME_RATES = {15, 30, 60};
+    /** BeamConfig.fit's values, in the order of the picture select. */
+    private static final String[] FITS = {"fit", "fill", "stretch"};
 
     // Dream Displays' look (its UiTheme)
     private static final int PAD = 10, GAP = 8, ROW = 20;
@@ -56,7 +58,7 @@ public final class BeamScreen extends Screen {
     /** Vanilla's list and text field colours: black inside, grey border, white around the chosen row, yellow hover text. */
     private static final int LIST_BG = 0xF0000000, LIST_BORDER = 0xFFA0A0A0, LIST_CHOSEN = 0xFFFFFFFF, LIST_HOVER = 0xFFFFFFA0;
     private static final int PLACEHOLDER = 0xFF1C1C1C, SCROLL_TRACK = 0xFF202020, SCROLL_THUMB = 0xFF808080, LIVE = 0xFF55FF55;
-    private static final int MIN_W = 560, MIN_H = 320, RES_SELECT_W = 80, FPS_SELECT_W = 74, MODE_SELECT_W = 190, ITEM_H = 16;
+    private static final int MIN_W = 560, MIN_H = 320, RES_SELECT_W = 80, FPS_SELECT_W = 74, FIT_SELECT_W = 86, MODE_SELECT_W = 190, ITEM_H = 16;
 
     private record Rect(int x, int y, int w, int h) {
         boolean contains(double mx, double my) {
@@ -130,7 +132,7 @@ public final class BeamScreen extends Screen {
     private final Screen parent;
     private final Targets.Target target;
     private final List<Hit> hits = new ArrayList<>();
-    private final Select resolutionSelect, frameRateSelect;
+    private final Select resolutionSelect, frameRateSelect, fitSelect;
     private Select openSelect;
     /** The camera mode select, made for one camera and its list of modes. */
     private Select modeSelect;
@@ -139,7 +141,7 @@ public final class BeamScreen extends Screen {
     private Tab tab = Tab.SCREENS;
     private List<CaptureSource> monitors, windows, cameras;
     private CaptureSource selected;
-    private int resolution, frameRate;
+    private int resolution, frameRate, fit;
     private boolean share, audio;
     private double scroll, maxScroll;
     private long lastClickMs;
@@ -158,6 +160,7 @@ public final class BeamScreen extends Screen {
         for (int i = 0; i < RESOLUTIONS.length; i++) if (RESOLUTIONS[i][1] == config.maxHeight) resolution = i;
         frameRate = 1;
         for (int i = 0; i < FRAME_RATES.length; i++) if (FRAME_RATES[i] == config.fps) frameRate = i;
+        for (int i = 0; i < FITS.length; i++) if (FITS[i].equalsIgnoreCase(config.fit)) fit = i;
         share = config.share;
         audio = config.systemAudio;
         monitors = new ArrayList<>(Sources.monitors());
@@ -169,6 +172,9 @@ public final class BeamScreen extends Screen {
         for (int i = 0; i < rates.length; i++) rates[i] = Texts.tr("ddbeam.dialog.fps.value", FRAME_RATES[i]).getString();
         resolutionSelect = new Select(RESOLUTION_LABELS, () -> resolution, i -> resolution = i);
         frameRateSelect = new Select(rates, () -> frameRate, i -> frameRate = i);
+        String[] fits = new String[FITS.length];
+        for (int i = 0; i < fits.length; i++) fits[i] = Texts.tr("ddbeam.dialog.fit." + FITS[i]).getString();
+        fitSelect = new Select(fits, () -> fit, i -> fit = i);
         LocalCast current = Casts.local();
         if (current != null && current.display.equals(target.id())) {
             selected = current.source;
@@ -195,9 +201,15 @@ public final class BeamScreen extends Screen {
         scroll = 0;
     }
 
-    /** Opens select menu i (0 resolution, 1 frame rate, 2 camera mode), or closes it with -1. */
+    /** Opens select menu i (0 resolution, 1 frame rate, 2 camera mode, 3 picture), or closes it with -1. */
     public void openSelect(int index) {
-        Select select = index == 0 ? resolutionSelect : index == 1 ? frameRateSelect : index == 2 ? modeSelect : null;
+        Select select = switch (index) {
+            case 0 -> resolutionSelect;
+            case 1 -> frameRateSelect;
+            case 2 -> modeSelect;
+            case 3 -> fitSelect;
+            default -> null;
+        };
         if (select != null) select.open();
         else openSelect = null;
     }
@@ -253,6 +265,7 @@ public final class BeamScreen extends Screen {
 
         boolean relays = serverRelays();
         Component resLabel = Texts.tr("ddbeam.dialog.resolution"), fpsLabel = Texts.tr("ddbeam.dialog.fps");
+        Component fitLabel = Texts.tr("ddbeam.dialog.fit");
         Component shareLabel = Texts.tr("ddbeam.dialog.share");
         String audioKey = selected == null ? "ddbeam.dialog.audio" : switch (selected.kind()) {
             case CAMERA, TEST -> "ddbeam.dialog.audio.camera";
@@ -261,7 +274,8 @@ public final class BeamScreen extends Screen {
         };
         Component audioLabel = Texts.tr(audioKey);
         int box = Gfx.checkboxSize();
-        int selectsW = g.width(resLabel) + 6 + RES_SELECT_W + 14 + g.width(fpsLabel) + 6 + FPS_SELECT_W;
+        int selectsW = g.width(resLabel) + 6 + RES_SELECT_W + 14 + g.width(fpsLabel) + 6 + FPS_SELECT_W
+                + 14 + g.width(fitLabel) + 6 + FIT_SELECT_W;
         int boxesW = box + 4 + g.width(shareLabel) + 16 + box + 4 + g.width(audioLabel);
         boolean oneRow = selectsW + 20 + boxesW <= vw - 4 * PAD;
         int rows = oneRow ? 1 : 2;
@@ -307,9 +321,15 @@ public final class BeamScreen extends Screen {
         x = fpsX + g.width(fpsLabel) + 6;
         frameRateSelect.button = new Rect(x, qy, FPS_SELECT_W, ROW);
         selectButton(g, frameRateSelect, mx, my);
+        int fitX = x + FPS_SELECT_W + 14;
+        g.text(fitLabel, fitX, qy + 6, SECONDARY, false);
+        x = fitX + g.width(fitLabel) + 6;
+        fitSelect.button = new Rect(x, qy, FIT_SELECT_W, ROW);
+        selectButton(g, fitSelect, mx, my);
+        hits.add(new Hit(new Rect(fitX, qy, x + FIT_SELECT_W - fitX, ROW), null, false, List.of(Texts.tr("ddbeam.dialog.fit.tip"))));
 
         // stream to players: only when the server has Beam (the mod or the plugin)
-        int cx = oneRow ? x + FPS_SELECT_W + 20 : qx, cy = (oneRow ? qy : qy + ROW + 4) + (ROW - box) / 2;
+        int cx = oneRow ? x + FIT_SELECT_W + 20 : qx, cy = (oneRow ? qy : qy + ROW + 4) + (ROW - box) / 2;
         List<Component> shareTip = relays ? List.of(Texts.tr("ddbeam.dialog.share.tip"))
                 : List.of(Texts.tr("ddbeam.dialog.share.off.title").withStyle(ChatFormatting.WHITE),
                 Texts.tr("ddbeam.dialog.share.off.body").withStyle(ChatFormatting.GRAY));
@@ -566,6 +586,7 @@ public final class BeamScreen extends Screen {
         config.maxWidth = res[0];
         config.maxHeight = res[1];
         config.fps = FRAME_RATES[frameRate];
+        config.fit = FITS[fit];
         config.share = share;
         if (selected.kind() == CaptureSource.Kind.CAMERA) {
             if (!audio) config.cameraAudio = "none";
