@@ -126,7 +126,7 @@ public final class DdBeamClient implements ClientModInitializer {
         Targets.Target target = Targets.lookedAt(64);
         if (target == null) return feedback(ctx, Texts.tr("ddbeam.error.no_display"));
         BeamConfig config = BeamConfig.get();
-        boolean audio = source.kind() == CaptureSource.Kind.CAMERA ? !"none".equalsIgnoreCase(config.cameraAudio) : config.systemAudio;
+        boolean audio = source.kind() == CaptureSource.Kind.CAMERA ? !"none".equalsIgnoreCase(Sources.microphoneChoice(source)) : config.systemAudio;
         Casts.start(target, new LocalCast.Settings(source, config.maxWidth, config.maxHeight, config.fps,
                 config.share && BeamClientNet.canSend(BeamPayloads.START), audio || source.kind() == CaptureSource.Kind.TEST));
         return 1;

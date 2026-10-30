@@ -154,10 +154,9 @@ public final class LocalCast {
                 }
             }
             case CAMERA -> {
-                if ("none".equalsIgnoreCase(config.cameraAudio)) return;
+                if ("none".equalsIgnoreCase(Sources.microphoneChoice(source))) return;
                 if (Sources.cameras() == null) Sources.refresh().join();
-                Sources.AudioDevice device = "auto".equalsIgnoreCase(config.cameraAudio)
-                        ? Sources.audioOf(source) : Sources.audioByName(config.cameraAudio);
+                Sources.AudioDevice device = Sources.microphoneOf(source);
                 if (device == null) {
                     DdBeam.LOGGER.info("No audio input found for camera {}", source.title());
                     return;

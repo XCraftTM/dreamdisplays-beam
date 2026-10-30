@@ -58,7 +58,7 @@ public final class BeamScreen extends Screen {
     /** Vanilla's list and text field colours: black inside, grey border, white around the chosen row, yellow hover text. */
     private static final int LIST_BG = 0xF0000000, LIST_BORDER = 0xFFA0A0A0, LIST_CHOSEN = 0xFFFFFFFF, LIST_HOVER = 0xFFFFFFA0;
     private static final int PLACEHOLDER = 0xFF1C1C1C, SCROLL_TRACK = 0xFF202020, SCROLL_THUMB = 0xFF808080, LIVE = 0xFF55FF55;
-    private static final int MIN_W = 560, MIN_H = 320, RES_SELECT_W = 80, FPS_SELECT_W = 74, FIT_SELECT_W = 86, MODE_SELECT_W = 190, ITEM_H = 16;
+    private static final int MIN_W = 560, MIN_H = 320, RES_SELECT_W = 80, FPS_SELECT_W = 74, FIT_SELECT_W = 86, MODE_SELECT_W = 190, MIC_SELECT_W = 170, ITEM_H = 16;
 
     private record Rect(int x, int y, int w, int h) {
         boolean contains(double mx, double my) {
@@ -79,6 +79,8 @@ public final class BeamScreen extends Screen {
         final IntSupplier get;
         final IntConsumer set;
         Rect button;
+        /** How wide the list wants to be for its longest choice (it is never narrower than the button). */
+        int listW;
         /** The first row shown, when the list is longer than the room for it. */
         int first;
 
@@ -94,7 +96,10 @@ public final class BeamScreen extends Screen {
             boolean up = labels.length > below && above > below;
             int rows = Math.max(1, Math.min(labels.length, up ? above : below));
             int h = rows * ITEM_H + 2;
-            return new Rect(button.x(), up ? button.y() - h - 1 : button.y() + button.h() + 1, button.w(), h);
+            // wider than the button for long choices (audio inputs' names), kept on the screen
+            int w = Math.min(vw - 8, Math.max(button.w(), listW));
+            int x = Math.max(4, Math.min(button.x(), vw - 4 - w));
+            return new Rect(x, up ? button.y() - h - 1 : button.y() + button.h() + 1, w, h);
         }
 
         int rows() {
@@ -138,6 +143,10 @@ public final class BeamScreen extends Screen {
     private Select modeSelect;
     private List<CameraModes.Mode> modeSelectModes;
     private CaptureSource modeSelectCamera;
+    /** The camera sound select, made for one camera and the audio inputs of the moment. */
+    private Select micSelect;
+    private List<Sources.AudioDevice> micSelectDevices;
+    private CaptureSource micSelectCamera;
     private Tab tab = Tab.SCREENS;
     private List<CaptureSource> monitors, windows, cameras;
     private CaptureSource selected;
@@ -201,13 +210,14 @@ public final class BeamScreen extends Screen {
         scroll = 0;
     }
 
-    /** Opens select menu i (0 resolution, 1 frame rate, 2 camera mode, 3 picture), or closes it with -1. */
+    /** Opens select menu i (0 resolution, 1 frame rate, 2 camera mode, 3 picture, 4 camera sound), or closes it with -1. */
     public void openSelect(int index) {
         Select select = switch (index) {
             case 0 -> resolutionSelect;
             case 1 -> frameRateSelect;
             case 2 -> modeSelect;
             case 3 -> fitSelect;
+            case 4 -> micSelect;
             default -> null;
         };
         if (select != null) select.open();
@@ -274,9 +284,11 @@ public final class BeamScreen extends Screen {
         };
         Component audioLabel = Texts.tr(audioKey);
         int box = Gfx.checkboxSize();
+        // a camera's sound: which audio input (cameras hand theirs to one), or none; the others have a check box
+        boolean mic = selected != null && selected.kind() == CaptureSource.Kind.CAMERA;
         int selectsW = g.width(resLabel) + 6 + RES_SELECT_W + 14 + g.width(fpsLabel) + 6 + FPS_SELECT_W
                 + 14 + g.width(fitLabel) + 6 + FIT_SELECT_W;
-        int boxesW = box + 4 + g.width(shareLabel) + 16 + box + 4 + g.width(audioLabel);
+        int boxesW = box + 4 + g.width(shareLabel) + 16 + (mic ? g.width(audioLabel) + 6 + MIC_SELECT_W : box + 4 + g.width(audioLabel));
         boolean oneRow = selectsW + 20 + boxesW <= vw - 4 * PAD;
         int rows = oneRow ? 1 : 2;
         int footerY = vh - PAD - ROW;
@@ -329,7 +341,7 @@ public final class BeamScreen extends Screen {
         hits.add(new Hit(new Rect(fitX, qy, x + FIT_SELECT_W - fitX, ROW), null, false, List.of(Texts.tr("ddbeam.dialog.fit.tip"))));
 
         // stream to players: only when the server has Beam (the mod or the plugin)
-        int cx = oneRow ? x + FIT_SELECT_W + 20 : qx, cy = (oneRow ? qy : qy + ROW + 4) + (ROW - box) / 2;
+        int cx = oneRow ? x + FIT_SELECT_W + 20 : qx, rowY = oneRow ? qy : qy + ROW + 4, cy = rowY + (ROW - box) / 2;
         List<Component> shareTip = relays ? List.of(Texts.tr("ddbeam.dialog.share.tip"))
                 : List.of(Texts.tr("ddbeam.dialog.share.off.title").withStyle(ChatFormatting.WHITE),
                 Texts.tr("ddbeam.dialog.share.off.body").withStyle(ChatFormatting.GRAY));
@@ -339,7 +351,8 @@ public final class BeamScreen extends Screen {
             case WINDOW -> "ddbeam.dialog.audio.window.tip";
             default -> "ddbeam.dialog.audio.screen.tip";
         };
-        checkbox(g, afterShare + 16, cy, audioLabel, audio, true, mx, my, () -> audio = !audio, List.of(Texts.tr(audioTipKey)));
+        if (mic) microphone(g, afterShare + 16, rowY, audioLabel, mx, my, List.of(Texts.tr(audioTipKey)));
+        else checkbox(g, afterShare + 16, cy, audioLabel, audio, true, mx, my, () -> audio = !audio, List.of(Texts.tr(audioTipKey)));
 
         // footer: who sees it, cancel, stop, go live
         int bx = vw - PAD - 100;
@@ -425,6 +438,26 @@ public final class BeamScreen extends Screen {
         hits.add(new Hit(r, null, false, List.of(Texts.tr("ddbeam.dialog.camera_mode.tip"))));
     }
 
+    /** The selected camera's sound: off, or one of the audio inputs (the one named like the camera at first). */
+    private void microphone(Gfx g, int x, int y, Component label, int mx, int my, List<Component> tooltip) {
+        g.text(label, x, y + 6, SECONDARY, false);
+        CaptureSource camera = selected;
+        List<Sources.AudioDevice> mics = Sources.microphones();
+        if (micSelect == null || micSelectCamera != camera || !mics.equals(micSelectDevices)) {
+            String[] labels = new String[mics.size() + 1];
+            labels[0] = Texts.tr("ddbeam.dialog.audio.off").getString();
+            for (int i = 0; i < mics.size(); i++) labels[i + 1] = mics.get(i).name();
+            micSelect = new Select(labels, () -> mics.indexOf(Sources.microphoneOf(camera)) + 1,
+                    i -> Sources.chooseMicrophone(camera, i == 0 ? null : mics.get(i - 1)));
+            micSelectDevices = mics;
+            micSelectCamera = camera;
+        }
+        int sx = x + g.width(label) + 6;
+        micSelect.button = new Rect(sx, y, MIC_SELECT_W, ROW);
+        selectButton(g, micSelect, mx, my);
+        hits.add(new Hit(new Rect(x, y, sx + MIC_SELECT_W - x, ROW), null, false, tooltip));
+    }
+
     private void button(Gfx g, Rect r, Component label, boolean lit, boolean enabled, int mx, int my, Runnable action) {
         boolean hover = enabled && r.contains(mx, my);
         g.button(r.x(), r.y(), r.w(), r.h(), hover || lit, enabled);
@@ -435,8 +468,14 @@ public final class BeamScreen extends Screen {
     }
 
     private void selectButton(Gfx g, Select select, int mx, int my) {
-        Component label = Texts.lit(select.labels[select.get.getAsInt()] + "  ▼");
         Rect r = select.button;
+        // a long choice (an audio input's name) is cut to fit
+        String arrow = "  ▼", choice = g.font().plainSubstrByWidth(select.labels[select.get.getAsInt()], r.w() - 8 - g.width(arrow));
+        Component label = Texts.lit(choice + arrow);
+        int widest = 0;
+        for (String choiceLabel : select.labels) widest = Math.max(widest, g.width(choiceLabel));
+        // the row's text inset and the scroll bar
+        select.listW = widest + 19;
         g.button(r.x(), r.y(), r.w(), r.h(), openSelect == select || r.contains(mx, my), true);
         g.text(label, r.x() + r.w() / 2 - g.width(label) / 2, r.y() + 6, TEXT, true);
         hits.add(new Hit(r, () -> {
@@ -589,8 +628,7 @@ public final class BeamScreen extends Screen {
         config.fit = FITS[fit];
         config.share = share;
         if (selected.kind() == CaptureSource.Kind.CAMERA) {
-            if (!audio) config.cameraAudio = "none";
-            else if ("none".equalsIgnoreCase(config.cameraAudio)) config.cameraAudio = "auto";
+            audio = Sources.microphoneOf(selected) != null;
         } else if (selected.kind() != CaptureSource.Kind.TEST) {
             config.systemAudio = audio;
         }

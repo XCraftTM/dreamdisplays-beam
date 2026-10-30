@@ -58,6 +58,8 @@ public final class BeamConfig {
     public String systemAudioDevice = "";
     /** A camera's audio: "auto" (the input named like the camera), "none", or an input's name. */
     public String cameraAudio = "auto";
+    /** The audio input picked in the cast dialog per camera (by device name), like {@link #cameraAudio}; none: that. */
+    public java.util.Map<String, String> cameraMicrophones = new java.util.HashMap<>();
     /** Volume of cast audio (yours and other players'). */
     public float volume = 1.0f;
     /** Cast audio fades out over this many blocks from the display. */

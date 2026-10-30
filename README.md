@@ -6,7 +6,8 @@ sound.
 
 - **Cast button in Dream Displays' display menu** (next to the delete button) and a key (`B`, look at a display):
   opens the cast dialog with tabs for screens, applications and cameras, live preview tiles, resolution
-  (480p – 1440p) and frame rate (15 / 30 / 60) select menus, "Stream to players" and the sound switch.
+  (480p – 1440p) and frame rate (15 / 30 / 60) select menus, "Stream to players" and the sound switch (for a
+  camera: a select menu of the audio inputs, or Off).
   "Stream to players" is greyed out and struck through, with a tooltip saying why, on a server without Beam.
 - **Camera mode**: for a camera, the dialog lists what the camera itself can send (size, frame rate and format, as
   FFmpeg reports them) and remembers the choice per camera. Many webcams reach 1080p at 60 FPS only as MJPEG and
@@ -37,8 +38,10 @@ sound.
   - Screen and application casts send what the computer plays to the other players only. You don't hear it twice,
     since you already hear it from your computer. On Windows the game's own sound is left out (process loopback,
     Windows 10 2004+), and an application cast takes only that application's sound.
-  - Camera casts take the camera's own audio input (found by name, like "Game Capture 4K60 Pro MK.2 Audio" or a
-    webcam's microphone) and play it for everyone, you included, from the display.
+  - Camera casts take an audio input and play it for everyone, you included, from the display. Cameras and capture
+    cards hand their sound to an input of their own: the one named like the camera ("Game Capture 4K60 Pro MK.2
+    Audio", a webcam's microphone) is chosen at first; the dialog's "Camera sound" select picks another one or Off,
+    remembered per camera.
   - Played positionally at the display, fading out over 32 blocks; volume follows "Jukebox/Note Blocks".
 
 ## Requirements

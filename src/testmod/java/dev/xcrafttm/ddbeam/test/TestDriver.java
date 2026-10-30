@@ -223,6 +223,13 @@ public final class TestDriver implements ClientModInitializer {
             case 42 -> {
                 if (now - stepAt < 800) return;
                 shot(mc, "dialog-modes");
+                if (Mc.screen() instanceof BeamScreen dialog) dialog.openSelect(4);
+                step = 44;
+                stepAt = now;
+            }
+            case 44 -> {
+                if (now - stepAt < 800) return;
+                shot(mc, "dialog-mics");
                 if (Mc.screen() instanceof BeamScreen dialog) dialog.openSelect(-1);
                 step = 5;
                 stepAt = now;

@@ -1,6 +1,7 @@
 package dev.xcrafttm.ddbeam.client.capture;
 
 import dev.xcrafttm.ddbeam.DdBeam;
+import dev.xcrafttm.ddbeam.client.BeamConfig;
 //#if MC >= 26.3
 import org.lwjgl.sdl.SDLStdinc;
 import org.lwjgl.sdl.SDLVideo;
@@ -151,6 +152,36 @@ public final class Sources {
             if (!name.isBlank() && (n.contains(name) || name.contains(n))) return device;
         }
         return null;
+    }
+
+    /** The inputs a camera's sound can come from: all but PulseAudio's monitors of outputs. */
+    public static List<AudioDevice> microphones() {
+        List<AudioDevice> out = new ArrayList<>();
+        for (AudioDevice device : audioDevices) if (!device.id().endsWith(".monitor")) out.add(device);
+        return out;
+    }
+
+    /**
+     * What a camera's sound comes from: the choice made for it in the cast dialog, else {@code cameraAudio}.
+     * "none", "auto" (the input named like the camera) or an input's name.
+     */
+    public static String microphoneChoice(CaptureSource camera) {
+        BeamConfig config = BeamConfig.get();
+        return config.cameraMicrophones.getOrDefault(camera.name(), config.cameraAudio);
+    }
+
+    /** The input a camera's sound comes from, null: none. A chosen input that is gone falls back to the camera's own. */
+    public static AudioDevice microphoneOf(CaptureSource camera) {
+        String choice = microphoneChoice(camera);
+        if ("none".equalsIgnoreCase(choice)) return null;
+        AudioDevice device = "auto".equalsIgnoreCase(choice) ? null : audioByName(choice);
+        return device != null ? device : audioOf(camera);
+    }
+
+    /** Remembers the input for this camera's sound; null: no sound. */
+    public static void chooseMicrophone(CaptureSource camera, AudioDevice device) {
+        BeamConfig.get().cameraMicrophones.put(camera.name(), device == null ? "none" : device.name());
+        BeamConfig.save();
     }
 
     public static AudioDevice audioByName(String wanted) {
